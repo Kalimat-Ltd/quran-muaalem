@@ -1,0 +1,18 @@
+# build source
+**/*.egg-info/
+
+# pypdl logs
+**pypdl.log
+
+# pycache
+**/__pycache__/
+
+# slurmoutput
+*.out
+
+# logs
+*.log
+
+# vim swap
+*.swp
+
