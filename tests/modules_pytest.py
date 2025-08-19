@@ -143,7 +143,15 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
                     ],
                 ]
             },
-            {"phonemes": [Unit(text="a", probs=torch.FloatTensor([1.0]))]},
+            {
+                "phonemes": [
+                    Unit(
+                        text="a",
+                        probs=torch.FloatTensor([1.0]),
+                        ids=torch.LongTensor([1]),
+                    )
+                ]
+            },
         ),
         # biger example
         (
@@ -159,7 +167,11 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
             },
             {
                 "phonemes": [
-                    Unit(text="abcd", probs=torch.FloatTensor([1.0, 1.0, 1.0, 1.0]))
+                    Unit(
+                        text="abcd",
+                        probs=torch.FloatTensor([1.0, 1.0, 1.0, 1.0]),
+                        ids=torch.LongTensor([1, 2, 3, 4]),
+                    )
                 ]
             },
         ),
@@ -175,7 +187,15 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
                     ],
                 ]
             },
-            {"phonemes": [Unit(text="abd", probs=torch.FloatTensor([1.0, 0.8, 1.0]))]},
+            {
+                "phonemes": [
+                    Unit(
+                        text="abd",
+                        probs=torch.FloatTensor([1.0, 0.8, 1.0]),
+                        ids=torch.LongTensor([1, 2, 4]),
+                    ),
+                ]
+            },
         ),
         # diffrent probs and levels
         (
@@ -197,9 +217,19 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
             },
             {
                 "phonemes": [
-                    Unit(text="abd", probs=torch.FloatTensor([1.0, 0.8, 1.0]))
+                    Unit(
+                        text="abd",
+                        probs=torch.FloatTensor([1.0, 0.8, 1.0]),
+                        ids=torch.LongTensor([1, 2, 4]),
+                    )
                 ],
-                "hams": [Unit(text="A", probs=torch.FloatTensor([0.9]))],
+                "hams": [
+                    Unit(
+                        text="A",
+                        probs=torch.FloatTensor([0.9]),
+                        ids=torch.LongTensor([1]),
+                    )
+                ],
             },
         ),
         # diffrent probs and multiple sequences
@@ -228,10 +258,24 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
             },
             {
                 "phonemes": [
-                    Unit(text="abd", probs=torch.FloatTensor([1.0, 0.8, 1.0])),
-                    Unit(text="a", probs=torch.FloatTensor([1.0])),
+                    Unit(
+                        text="abd",
+                        probs=torch.FloatTensor([1.0, 0.8, 1.0]),
+                        ids=torch.LongTensor([1, 2, 4]),
+                    ),
+                    Unit(
+                        text="a",
+                        probs=torch.FloatTensor([1.0]),
+                        ids=torch.LongTensor([1]),
+                    ),
                 ],
-                "hams": [Unit(text="A", probs=torch.FloatTensor([0.9]))],
+                "hams": [
+                    Unit(
+                        text="A",
+                        probs=torch.FloatTensor([0.9]),
+                        ids=torch.LongTensor([1]),
+                    )
+                ],
             },
         ),
     ],

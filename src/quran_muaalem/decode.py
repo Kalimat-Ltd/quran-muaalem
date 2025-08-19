@@ -101,6 +101,8 @@ def multilevel_greedy_decode(
             text = ""
             for idx in decode_out.ids:
                 text += level_to_id_to_vocab[level][int(idx)]
-            level_to_units[level].append(Unit(text=text, probs=decode_out.p))
+            level_to_units[level].append(
+                Unit(text=text, probs=decode_out.p, ids=decode_out.ids)
+            )
 
     return level_to_units

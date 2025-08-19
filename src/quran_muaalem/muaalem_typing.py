@@ -1,11 +1,17 @@
 from typing import Sequence
 from dataclasses import dataclass
+import torch
 
 
 @dataclass
 class Unit:
+    """
+    probs: 1D tensors
+    """
+
     text: str
-    probs: Sequence[float] | float
+    probs: torch.FloatTensor
+    ids: torch.LongTensor
 
 
 @dataclass
