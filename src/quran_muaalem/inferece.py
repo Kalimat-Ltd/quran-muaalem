@@ -10,7 +10,39 @@ from numpy.typing import NDArray
 from .modeling.multi_level_tokenizer import MultiLevelTokenizer
 from .modeling.modeling_multi_level_ctc import Wav2Vec2BertForMultilevelCTC
 from .decode import multilevel_greedy_decode
-from .muaalem_typing import Unit, SingleUnit, Sifa, MuaalemOutput
+from .muaalem_typing import Unit, SingleUnit, Sifa, MuaalemOutput, SingleUnit
+
+
+def format_sifat(
+    level_to_units: dict[str, list[Unit]],
+    chunked_phonemes_batch: list[list[str]],
+    multi_level_tokenizer: MultiLevelTokenizer,
+) -> list[list[Sifa]]:
+    sifat_batch = []
+    for seq_idx in range(len(chunked_phonemes_batch)):
+        sifat = []
+        for idx, ph_group in enumerate(chunked_phonemes_batch[seq_idx]):
+            sifa_dict = {}
+            for level in level_to_units:
+                if level == "phonemes":
+                    continue
+                if idx < len(level_to_units[level][seq_idx].ids):
+                    label = level_to_units[level][seq_idx].ids[idx]
+                    text = multi_level_tokenizer.sifat_to_en_vocab[level][label]
+                    p = level_to_units[level][seq_idx].probs[idx]
+                    sifa_dict[level] = SingleUnit(
+                        text=text, prob=float(p), idx=int(label)
+                    )
+                else:
+                    sifa_dict[level] = None
+            sifat.append(
+                Sifa(
+                    phonemes_group=chunck_phonemes([seq_idx][idx]),
+                    **sifa_dict,
+                )
+            )
+        sifat_batch.append(sifat)
+    return sifat_batch
 
 
 class Muaalem:
@@ -64,17 +96,23 @@ class Muaalem:
                     .to(torch.float32)
                 )
 
-            level_to_units: dict[str, Unit] = multilevel_greedy_decode(probs)
+            level_to_units = multilevel_greedy_decode(
+                probs,
+                self.multi_level_tokenizer.id_to_vocab,
+            )
 
             chunked_phonemes_batch: list[list[str]] = []
             for phonemes_unit in level_to_units["phonemes"]:
                 chunked_phonemes_batch.append(chunck_phonemes(phonemes_unit.text))
 
-            sifat_batch: list[list[Sifa]] = self._fromat_sifat(
-                level_to_units, chunked_phonemes_batch
+            sifat_batch: list[list[Sifa]] = format_sifat(
+                level_to_units,
+                chunked_phonemes_batch,
+                self.multi_level_tokenizer,
             )
 
             outs = []
+            # looping over the batch
             for idx in range(len(level_to_units["phonemes"])):
                 outs.append(
                     MuaalemOutput(
