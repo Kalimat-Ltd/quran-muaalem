@@ -29,6 +29,7 @@ SIFAT_ATTR_TO_ARABIC = {
     "not_maghnoon": "لا غنة",
 }
 SIFAT_ATTR_TO_ARABIC = {k: f"[{v}]" for k, v in SIFAT_ATTR_TO_ARABIC.items()}
+SIFAT_ATTR_TO_ENGLISH = {v: k for k, v in SIFAT_ATTR_TO_ARABIC.items()}
 
 PAD_TOKEN = "[PAD]"
 PAD_TOKEN_IDX = 0

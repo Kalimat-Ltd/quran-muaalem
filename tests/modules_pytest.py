@@ -1,8 +1,13 @@
+from dataclasses import asdict
+import json
+
 import torch
 import pytest
 
 from quran_muaalem.decode import ctc_decode, CTCDecodeOut, multilevel_greedy_decode
-from quran_muaalem.muaalem_typing import Unit
+from quran_muaalem.muaalem_typing import Unit, Sifa, SingleUnit
+from quran_muaalem.modeling.multi_level_tokenizer import MultiLevelTokenizer
+from quran_muaalem.inference import format_sifat
 
 
 @pytest.mark.parametrize(
@@ -300,3 +305,256 @@ def test_multilevel_greedy_decode(level_to_probs, ex_level_to_units):
             print(f"EXP UNIT: {ex_unit}")
             assert unit.text == ex_unit.text
             torch.testing.assert_close(unit.probs, ex_unit.probs)
+
+
+@pytest.mark.parametrize(
+    "level_to_units, chunked_phonemes_batch, ex_sifat_batch",
+    [
+        (
+            {
+                "hams_or_jahr": [Unit(text="", probs=[0.1], ids=[1])],
+                "shidda_or_rakhawa": [Unit(text="", probs=[0.2], ids=[1])],
+                "tafkheem_or_taqeeq": [Unit(text="", probs=[0.3], ids=[1])],
+                "itbaq": [Unit(text="", probs=[0.4], ids=[1])],
+                "safeer": [Unit(text="", probs=[0.5], ids=[1])],
+                "qalqla": [Unit(text="", probs=[0.6], ids=[1])],
+                "tikraar": [Unit(text="", probs=[0.7], ids=[1])],
+                "tafashie": [Unit(text="", probs=[0.8], ids=[1])],
+                "istitala": [Unit(text="", probs=[0.9], ids=[1])],
+                "ghonna": [Unit(text="", probs=[0.1], ids=[1])],
+            },
+            [
+                ["a"],
+            ],
+            [
+                [
+                    Sifa(
+                        phonemes_group="a",
+                        hams_or_jahr=SingleUnit(text="hams", prob=0.1, idx=1),
+                        shidda_or_rakhawa=SingleUnit(text="shadeed", prob=0.2, idx=1),
+                        tafkheem_or_taqeeq=SingleUnit(text="mofakham", prob=0.3, idx=1),
+                        itbaq=SingleUnit(text="monfateh", prob=0.4, idx=1),
+                        safeer=SingleUnit(text="safeer", prob=0.5, idx=1),
+                        qalqla=SingleUnit(text="moqalqal", prob=0.6, idx=1),
+                        tikraar=SingleUnit(text="mokarar", prob=0.7, idx=1),
+                        tafashie=SingleUnit(text="motafashie", prob=0.8, idx=1),
+                        istitala=SingleUnit(text="mostateel", prob=0.9, idx=1),
+                        ghonna=SingleUnit(text="maghnoon", prob=0.1, idx=1),
+                    )
+                ]
+            ],
+        ),
+        # seq len of 2
+        (
+            {
+                "hams_or_jahr": [Unit(text="", probs=[0.1, 0.9], ids=[1, 2])],
+                "shidda_or_rakhawa": [Unit(text="", probs=[0.2, 0.8], ids=[1, 2])],
+                "tafkheem_or_taqeeq": [Unit(text="", probs=[0.3, 0.7], ids=[1, 2])],
+                "itbaq": [Unit(text="", probs=[0.4, 0.6], ids=[1, 2])],
+                "safeer": [Unit(text="", probs=[0.5, 0.5], ids=[1, 2])],
+                "qalqla": [Unit(text="", probs=[0.6, 0.4], ids=[1, 2])],
+                "tikraar": [Unit(text="", probs=[0.7, 0.3], ids=[1, 2])],
+                "tafashie": [Unit(text="", probs=[0.8, 0.2], ids=[1, 2])],
+                "istitala": [Unit(text="", probs=[0.9, 0.1], ids=[1, 2])],
+                "ghonna": [Unit(text="", probs=[0.1, 0.9], ids=[1, 2])],
+            },
+            [
+                ["a", "b"],
+            ],
+            [
+                [
+                    Sifa(
+                        phonemes_group="a",
+                        hams_or_jahr=SingleUnit(text="hams", prob=0.1, idx=1),
+                        shidda_or_rakhawa=SingleUnit(text="shadeed", prob=0.2, idx=1),
+                        tafkheem_or_taqeeq=SingleUnit(text="mofakham", prob=0.3, idx=1),
+                        itbaq=SingleUnit(text="monfateh", prob=0.4, idx=1),
+                        safeer=SingleUnit(text="safeer", prob=0.5, idx=1),
+                        qalqla=SingleUnit(text="moqalqal", prob=0.6, idx=1),
+                        tikraar=SingleUnit(text="mokarar", prob=0.7, idx=1),
+                        tafashie=SingleUnit(text="motafashie", prob=0.8, idx=1),
+                        istitala=SingleUnit(text="mostateel", prob=0.9, idx=1),
+                        ghonna=SingleUnit(text="maghnoon", prob=0.1, idx=1),
+                    ),
+                    Sifa(
+                        phonemes_group="b",
+                        hams_or_jahr=SingleUnit(text="jahr", prob=0.9, idx=2),
+                        shidda_or_rakhawa=SingleUnit(text="between", prob=0.8, idx=2),
+                        tafkheem_or_taqeeq=SingleUnit(text="moraqaq", prob=0.7, idx=2),
+                        itbaq=SingleUnit(text="motbaq", prob=0.6, idx=2),
+                        safeer=SingleUnit(text="no_safeer", prob=0.5, idx=2),
+                        qalqla=SingleUnit(text="not_moqalqal", prob=0.4, idx=2),
+                        tikraar=SingleUnit(text="not_mokarar", prob=0.3, idx=2),
+                        tafashie=SingleUnit(text="not_motafashie", prob=0.2, idx=2),
+                        istitala=SingleUnit(text="not_mostateel", prob=0.1, idx=2),
+                        ghonna=SingleUnit(text="not_maghnoon", prob=0.9, idx=2),
+                    ),
+                ]
+            ],
+        ),
+        # seq len of 2 with None
+        (
+            {
+                "hams_or_jahr": [Unit(text="", probs=[0.1, 0.9], ids=[1, 2])],
+                "shidda_or_rakhawa": [Unit(text="", probs=[0.2, 0.8], ids=[1, 2])],
+                "tafkheem_or_taqeeq": [Unit(text="", probs=[0.3, 0.7], ids=[1, 2])],
+                "itbaq": [Unit(text="", probs=[0.4, 0.6], ids=[1, 2])],
+                "safeer": [Unit(text="", probs=[0.5, 0.5], ids=[1, 2])],
+                "qalqla": [Unit(text="", probs=[0.6, 0.4], ids=[1, 2])],
+                "tikraar": [Unit(text="", probs=[0.7, 0.3], ids=[1, 2])],
+                "tafashie": [Unit(text="", probs=[0.8, 0.2], ids=[1, 2])],
+                "istitala": [Unit(text="", probs=[0.9, 0.1], ids=[1, 2])],
+                "ghonna": [Unit(text="", probs=[0.1], ids=[1])],
+            },
+            [
+                ["a", "b"],
+            ],
+            [
+                [
+                    Sifa(
+                        phonemes_group="a",
+                        hams_or_jahr=SingleUnit(text="hams", prob=0.1, idx=1),
+                        shidda_or_rakhawa=SingleUnit(text="shadeed", prob=0.2, idx=1),
+                        tafkheem_or_taqeeq=SingleUnit(text="mofakham", prob=0.3, idx=1),
+                        itbaq=SingleUnit(text="monfateh", prob=0.4, idx=1),
+                        safeer=SingleUnit(text="safeer", prob=0.5, idx=1),
+                        qalqla=SingleUnit(text="moqalqal", prob=0.6, idx=1),
+                        tikraar=SingleUnit(text="mokarar", prob=0.7, idx=1),
+                        tafashie=SingleUnit(text="motafashie", prob=0.8, idx=1),
+                        istitala=SingleUnit(text="mostateel", prob=0.9, idx=1),
+                        ghonna=SingleUnit(text="maghnoon", prob=0.1, idx=1),
+                    ),
+                    Sifa(
+                        phonemes_group="b",
+                        hams_or_jahr=SingleUnit(text="jahr", prob=0.9, idx=2),
+                        shidda_or_rakhawa=SingleUnit(text="between", prob=0.8, idx=2),
+                        tafkheem_or_taqeeq=SingleUnit(text="moraqaq", prob=0.7, idx=2),
+                        itbaq=SingleUnit(text="motbaq", prob=0.6, idx=2),
+                        safeer=SingleUnit(text="no_safeer", prob=0.5, idx=2),
+                        qalqla=SingleUnit(text="not_moqalqal", prob=0.4, idx=2),
+                        tikraar=SingleUnit(text="not_mokarar", prob=0.3, idx=2),
+                        tafashie=SingleUnit(text="not_motafashie", prob=0.2, idx=2),
+                        istitala=SingleUnit(text="not_mostateel", prob=0.1, idx=2),
+                        ghonna=None,
+                    ),
+                ]
+            ],
+        ),
+        # seq len of 2 with None with bathing
+        (
+            {
+                "hams_or_jahr": [
+                    Unit(text="", probs=[0.1], ids=[1]),
+                    Unit(text="", probs=[0.1, 0.9], ids=[1, 2]),
+                ],
+                "shidda_or_rakhawa": [
+                    Unit(text="", probs=[0.2], ids=[1]),
+                    Unit(text="", probs=[0.2, 0.8], ids=[1, 2]),
+                ],
+                "tafkheem_or_taqeeq": [
+                    Unit(text="", probs=[0.3], ids=[1]),
+                    Unit(text="", probs=[0.3, 0.7], ids=[1, 2]),
+                ],
+                "itbaq": [
+                    Unit(text="", probs=[0.4], ids=[1]),
+                    Unit(text="", probs=[0.4, 0.6], ids=[1, 2]),
+                ],
+                "safeer": [
+                    Unit(text="", probs=[0.5], ids=[1]),
+                    Unit(text="", probs=[0.5, 0.5], ids=[1, 2]),
+                ],
+                "qalqla": [
+                    Unit(text="", probs=[0.6], ids=[1]),
+                    Unit(text="", probs=[0.6, 0.4], ids=[1, 2]),
+                ],
+                "tikraar": [
+                    Unit(text="", probs=[0.7], ids=[1]),
+                    Unit(text="", probs=[0.7, 0.3], ids=[1, 2]),
+                ],
+                "tafashie": [
+                    Unit(text="", probs=[0.8], ids=[1]),
+                    Unit(text="", probs=[0.8, 0.2], ids=[1, 2]),
+                ],
+                "istitala": [
+                    Unit(text="", probs=[0.9], ids=[1]),
+                    Unit(text="", probs=[0.9, 0.1], ids=[1, 2]),
+                ],
+                "ghonna": [
+                    Unit(text="", probs=[0.1], ids=[1]),
+                    Unit(text="", probs=[0.1], ids=[1]),
+                ],
+            },
+            [
+                ["a"],
+                ["a", "b"],
+            ],
+            [
+                [
+                    Sifa(
+                        phonemes_group="a",
+                        hams_or_jahr=SingleUnit(text="hams", prob=0.1, idx=1),
+                        shidda_or_rakhawa=SingleUnit(text="shadeed", prob=0.2, idx=1),
+                        tafkheem_or_taqeeq=SingleUnit(text="mofakham", prob=0.3, idx=1),
+                        itbaq=SingleUnit(text="monfateh", prob=0.4, idx=1),
+                        safeer=SingleUnit(text="safeer", prob=0.5, idx=1),
+                        qalqla=SingleUnit(text="moqalqal", prob=0.6, idx=1),
+                        tikraar=SingleUnit(text="mokarar", prob=0.7, idx=1),
+                        tafashie=SingleUnit(text="motafashie", prob=0.8, idx=1),
+                        istitala=SingleUnit(text="mostateel", prob=0.9, idx=1),
+                        ghonna=SingleUnit(text="maghnoon", prob=0.1, idx=1),
+                    )
+                ],
+                [
+                    Sifa(
+                        phonemes_group="a",
+                        hams_or_jahr=SingleUnit(text="hams", prob=0.1, idx=1),
+                        shidda_or_rakhawa=SingleUnit(text="shadeed", prob=0.2, idx=1),
+                        tafkheem_or_taqeeq=SingleUnit(text="mofakham", prob=0.3, idx=1),
+                        itbaq=SingleUnit(text="monfateh", prob=0.4, idx=1),
+                        safeer=SingleUnit(text="safeer", prob=0.5, idx=1),
+                        qalqla=SingleUnit(text="moqalqal", prob=0.6, idx=1),
+                        tikraar=SingleUnit(text="mokarar", prob=0.7, idx=1),
+                        tafashie=SingleUnit(text="motafashie", prob=0.8, idx=1),
+                        istitala=SingleUnit(text="mostateel", prob=0.9, idx=1),
+                        ghonna=SingleUnit(text="maghnoon", prob=0.1, idx=1),
+                    ),
+                    Sifa(
+                        phonemes_group="b",
+                        hams_or_jahr=SingleUnit(text="jahr", prob=0.9, idx=2),
+                        shidda_or_rakhawa=SingleUnit(text="between", prob=0.8, idx=2),
+                        tafkheem_or_taqeeq=SingleUnit(text="moraqaq", prob=0.7, idx=2),
+                        itbaq=SingleUnit(text="motbaq", prob=0.6, idx=2),
+                        safeer=SingleUnit(text="no_safeer", prob=0.5, idx=2),
+                        qalqla=SingleUnit(text="not_moqalqal", prob=0.4, idx=2),
+                        tikraar=SingleUnit(text="not_mokarar", prob=0.3, idx=2),
+                        tafashie=SingleUnit(text="not_motafashie", prob=0.2, idx=2),
+                        istitala=SingleUnit(text="not_mostateel", prob=0.1, idx=2),
+                        ghonna=None,
+                    ),
+                ],
+            ],
+        ),
+    ],
+)
+def test_fromat_sifat(level_to_units, chunked_phonemes_batch, ex_sifat_batch):
+    multi_level_tokenizer = MultiLevelTokenizer("obadx/muaalem-model-v2_1")
+    sifat_batch = format_sifat(
+        level_to_units, chunked_phonemes_batch, multi_level_tokenizer
+    )
+    for level in level_to_units:
+        for idx in range(len(level_to_units[level])):
+            level_to_units[level][idx].probs = torch.FloatTensor(
+                level_to_units[level][idx].probs
+            )
+            level_to_units[level][idx].ids = torch.LongTensor(
+                level_to_units[level][idx].ids
+            )
+
+    assert len(sifat_batch) == len(ex_sifat_batch)
+    for sifat, ex_sifat in zip(sifat_batch, ex_sifat_batch):
+        assert len(sifat) == len(ex_sifat)
+        for sifa, ex_sifa in zip(sifat, ex_sifat):
+            print(f"OUPUT: {json.dumps(asdict(sifa), indent=2)}")
+            print(f"EX OUPUT: {json.dumps(asdict(ex_sifa), indent=2)}")
+            print("-" * 50)
+            assert sifa == ex_sifa

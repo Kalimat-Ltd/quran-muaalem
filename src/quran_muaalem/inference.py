@@ -37,7 +37,7 @@ def format_sifat(
                     sifa_dict[level] = None
             sifat.append(
                 Sifa(
-                    phonemes_group=chunck_phonemes([seq_idx][idx]),
+                    phonemes_group=chunked_phonemes_batch[seq_idx][idx],
                     **sifa_dict,
                 )
             )

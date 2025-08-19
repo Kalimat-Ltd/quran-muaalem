@@ -10,14 +10,15 @@ class Unit:
     """
 
     text: str
-    probs: torch.FloatTensor
-    ids: torch.LongTensor
+    probs: torch.FloatTensor | list[float]
+    ids: torch.LongTensor | list[int]
 
 
 @dataclass
 class SingleUnit:
     text: str
     prob: float
+    idx: int
 
 
 @dataclass
