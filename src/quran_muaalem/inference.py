@@ -27,7 +27,7 @@ def format_sifat(
                 if level == "phonemes":
                     continue
                 if idx < len(level_to_units[level][seq_idx].ids):
-                    label = level_to_units[level][seq_idx].ids[idx]
+                    label = int(level_to_units[level][seq_idx].ids[idx])
                     text = multi_level_tokenizer.sifat_to_en_vocab[level][label]
                     p = level_to_units[level][seq_idx].probs[idx]
                     sifa_dict[level] = SingleUnit(
@@ -69,55 +69,50 @@ class Muaalem:
 
         self.model.to(device, dtype=dtype)
 
-        def __call__(
-            self,
-            waves: list[list[float] | torch.FloatTensor | NDArray],
-            sampling_rate: int,
-            top_n: int = 3,
-        ) -> list[MuaalemOutput]:
-            if sampling_rate != 16000:
-                raise ValueError(
-                    f"`sampling_rate` has to be 16000 got: `{sampling_rate}`"
-                )
+    def __call__(
+        self,
+        waves: list[list[float] | torch.FloatTensor | NDArray],
+        sampling_rate: int,
+    ) -> list[MuaalemOutput]:
+        if sampling_rate != 16000:
+            raise ValueError(f"`sampling_rate` has to be 16000 got: `{sampling_rate}`")
 
-            features = self.processor(
-                waves, sampling_rate=sampling_rate, return_tensors="pt"
-            )
-            features = {
-                k: v.to(self.device, dtype=self.dtype) for k, v in features.items()
-            }
-            outs = self.model(**features, return_dict=False)[0]
+        features = self.processor(
+            waves, sampling_rate=sampling_rate, return_tensors="pt"
+        )
+        features = {k: v.to(self.device, dtype=self.dtype) for k, v in features.items()}
+        outs = self.model(**features, return_dict=False)[0]
 
-            probs = {}
-            for level in outs:
-                probs[level] = (
-                    torch.nn.functional.softmax(outs[level], dim=-1)
-                    .cpu()
-                    .to(torch.float32)
-                )
-
-            level_to_units = multilevel_greedy_decode(
-                probs,
-                self.multi_level_tokenizer.id_to_vocab,
+        probs = {}
+        for level in outs:
+            probs[level] = (
+                torch.nn.functional.softmax(outs[level], dim=-1).cpu().to(torch.float32)
             )
 
-            chunked_phonemes_batch: list[list[str]] = []
-            for phonemes_unit in level_to_units["phonemes"]:
-                chunked_phonemes_batch.append(chunck_phonemes(phonemes_unit.text))
+        level_to_units = multilevel_greedy_decode(
+            probs,
+            self.multi_level_tokenizer.id_to_vocab,
+        )
+        for level in level_to_units:
+            print(f"`{level}`: {len(level_to_units[level][0].ids)}")
 
-            sifat_batch: list[list[Sifa]] = format_sifat(
-                level_to_units,
-                chunked_phonemes_batch,
-                self.multi_level_tokenizer,
-            )
+        chunked_phonemes_batch: list[list[str]] = []
+        for phonemes_unit in level_to_units["phonemes"]:
+            chunked_phonemes_batch.append(chunck_phonemes(phonemes_unit.text))
 
-            outs = []
-            # looping over the batch
-            for idx in range(len(level_to_units["phonemes"])):
-                outs.append(
-                    MuaalemOutput(
-                        phonemes=level_to_units["phonemes"][idx],
-                        sifat=sifat_batch[idx],
-                    )
+        sifat_batch: list[list[Sifa]] = format_sifat(
+            level_to_units,
+            chunked_phonemes_batch,
+            self.multi_level_tokenizer,
+        )
+
+        outs = []
+        # looping over the batch
+        for idx in range(len(level_to_units["phonemes"])):
+            outs.append(
+                MuaalemOutput(
+                    phonemes=level_to_units["phonemes"][idx],
+                    sifat=sifat_batch[idx],
                 )
-            return outs
+            )
+        return outs

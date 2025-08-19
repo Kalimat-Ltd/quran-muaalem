@@ -35,6 +35,7 @@ classifiers = [
 
 test = [
   "pytest",
+  "torchcodec>=0.6.0",
 ]
 
 [project.urls]
