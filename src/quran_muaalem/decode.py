@@ -24,7 +24,8 @@ def ctc_decode(
     collapse_consecutive=True,
 ) -> list[CTCDecodeOut]:
     """
-    batch (torch.LongTensor): batch on integer ids of shape: batch, sequecne_len
+    batch_ids (torch.LongTensor): batch on integer ids of shape: batch, sequecne_len
+    batch_probs (torch.LongTensor): batch on float32 ids of shape: batch, sequecne_len
 
     Return:
         list[tuple[list[int], float]]]:
@@ -39,6 +40,10 @@ def ctc_decode(
             probs = []
             start = 0
             end = 0
+            if len(seq) == 1 and seq[0] != blank_id:
+                tokens.append(seq[0])
+                probs.append(batch_probs[seq_idx][0])
+
             for idx in range(len(seq) - 1):
                 curr = seq[idx]
                 next = seq[idx + 1]
@@ -83,4 +88,19 @@ def ctc_decode(
 
 def multilevel_greedy_decode(
     level_to_probs: dict[str, torch.FloatTensor],
-) -> dict[str, Unit]: ...
+    level_to_id_to_vocab: dict[str, dict[int, str]],
+) -> dict[str, list[Unit]]:
+    level_to_units = {}
+    for level in level_to_probs:
+        batch_probs, batch_ids = level_to_probs[level].topk(1, dim=-1)
+        decode_outs = ctc_decode(
+            batch_ids.squeeze(-1), batch_probs.squeeze(-1), collapse_consecutive=True
+        )
+        level_to_units[level] = []
+        for decode_out in decode_outs:
+            text = ""
+            for idx in decode_out.ids:
+                text += level_to_id_to_vocab[level][int(idx)]
+            level_to_units[level].append(Unit(text=text, probs=decode_out.p))
+
+    return level_to_units
