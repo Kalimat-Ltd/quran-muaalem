@@ -1,3 +1,4 @@
+from typing import Sequence
 from dataclasses import dataclass
 import torch
 import numpy as np
@@ -106,3 +107,44 @@ def multilevel_greedy_decode(
             )
 
     return level_to_units
+
+
+def align_sequence(
+    seq: Sequence[int], target_len: int, min_repeat: int = 3
+) -> list[int]:
+    """Aligns a sequence by removing items from the longest repateted items
+
+    Returns:
+        list[int]: the ids which are goning to be deleted if longest_repeat > len(seq) - target_len
+
+    Example:
+                seq = [1, 0, 1, 0, 0, 0, 0, 1], target_len = 7
+                                ^  ^  ^
+    Longest Repeat              ^  ^  ^
+    Ouput: [3]
+    """
+
+    if len(seq) <= target_len:
+        return []
+
+    longest_start = 0
+    longest_repeat = 0
+    curr_repeat = 1
+    curr_start = 0
+    for idx in range(len(seq) - 1):
+        curr = seq[idx]
+        next = seq[idx + 1]
+        if curr == next:
+            curr_repeat += 1
+        if (curr != next) or (idx == len(seq) - 2):
+            if curr_repeat > longest_repeat and curr_repeat >= min_repeat:
+                longest_repeat = curr_repeat
+                longest_start = curr_start
+            curr_start = idx + 1
+            curr_repeat = 1
+
+    # logical case to remote only from the longest repeat
+    if longest_repeat > len(seq) - target_len:
+        return list(range(longest_start, longest_start + len(seq) - target_len))
+    else:
+        return []

@@ -321,6 +321,36 @@ def test_multilevel_greedy_decode(level_to_probs, ex_level_to_units):
             3,
             [0],
         ),
+        (
+            [1, 1, 1, 1, 1],
+            3,
+            3,
+            [0, 1],
+        ),
+        (
+            [1, 1, 1, 1, 1],
+            3,
+            5,
+            [0, 1],
+        ),
+        (
+            [1, 1, 1, 1, 1],
+            3,
+            6,
+            [],
+        ),
+        (
+            [1, 0, 1, 1, 0],
+            3,
+            1,
+            [],
+        ),
+        (
+            [1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0],
+            10,
+            5,
+            [3, 4],
+        ),
     ],
 )
 def test_alilgn_sequence(seq, target_len, min_repeat, ex_out):
