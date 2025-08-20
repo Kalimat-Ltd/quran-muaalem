@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 
 from .modeling.multi_level_tokenizer import MultiLevelTokenizer
 from .modeling.modeling_multi_level_ctc import Wav2Vec2BertForMultilevelCTC
-from .decode import multilevel_greedy_decode
+from .decode import multilevel_greedy_decode, align_sequence
 from .muaalem_typing import Unit, SingleUnit, Sifa, MuaalemOutput, SingleUnit
 
 
@@ -17,19 +17,32 @@ def format_sifat(
     level_to_units: dict[str, list[Unit]],
     chunked_phonemes_batch: list[list[str]],
     multi_level_tokenizer: MultiLevelTokenizer,
+    min_repeat=4,
 ) -> list[list[Sifa]]:
     sifat_batch = []
     for seq_idx in range(len(chunked_phonemes_batch)):
         sifat = []
+        level_to_offset = {level: 0 for level in level_to_units}
+        level_to_skip_ids = {
+            level: align_sequence(
+                level_to_units[level][seq_idx].ids,
+                len(chunked_phonemes_batch[seq_idx]),
+                min_repeat=min_repeat,
+            )
+            for level in level_to_units
+        }
         for idx, ph_group in enumerate(chunked_phonemes_batch[seq_idx]):
             sifa_dict = {}
             for level in level_to_units:
                 if level == "phonemes":
                     continue
-                if idx < len(level_to_units[level][seq_idx].ids):
-                    label = int(level_to_units[level][seq_idx].ids[idx])
+                if idx in level_to_skip_ids[level]:
+                    level_to_offset[level] = len(level_to_skip_ids[level])
+                sifa_idx = idx + level_to_offset[level]
+                if sifa_idx < len(level_to_units[level][seq_idx].ids):
+                    label = int(level_to_units[level][seq_idx].ids[sifa_idx])
                     text = multi_level_tokenizer.sifat_to_en_vocab[level][label]
-                    p = level_to_units[level][seq_idx].probs[idx]
+                    p = level_to_units[level][seq_idx].probs[sifa_idx]
                     sifa_dict[level] = SingleUnit(
                         text=text, prob=float(p), idx=int(label)
                     )
@@ -73,6 +86,7 @@ class Muaalem:
         self,
         waves: list[list[float] | torch.FloatTensor | NDArray],
         sampling_rate: int,
+        min_repeat=4,
     ) -> list[MuaalemOutput]:
         if sampling_rate != 16000:
             raise ValueError(f"`sampling_rate` has to be 16000 got: `{sampling_rate}`")
@@ -93,8 +107,6 @@ class Muaalem:
             probs,
             self.multi_level_tokenizer.id_to_vocab,
         )
-        for level in level_to_units:
-            print(f"`{level}`: {len(level_to_units[level][0].ids)}")
 
         chunked_phonemes_batch: list[list[str]] = []
         for phonemes_unit in level_to_units["phonemes"]:
@@ -104,6 +116,7 @@ class Muaalem:
             level_to_units,
             chunked_phonemes_batch,
             self.multi_level_tokenizer,
+            min_repeat=min_repeat,
         )
 
         outs = []

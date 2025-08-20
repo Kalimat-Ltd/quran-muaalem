@@ -110,7 +110,7 @@ def multilevel_greedy_decode(
 
 
 def align_sequence(
-    seq: Sequence[int], target_len: int, min_repeat: int = 3
+    seq: Sequence[int] | torch.LongTensor, target_len: int, min_repeat: int = 3
 ) -> list[int]:
     """Aligns a sequence by removing items from the longest repateted items
 
