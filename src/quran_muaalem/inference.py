@@ -82,6 +82,7 @@ class Muaalem:
 
         self.model.to(device, dtype=dtype)
 
+    @torch.no_grad()
     def __call__(
         self,
         waves: list[list[float] | torch.FloatTensor | NDArray],
