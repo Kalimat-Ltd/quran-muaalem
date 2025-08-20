@@ -4,8 +4,10 @@ from pathlib import Path
 
 import torch
 
+from quran_transcript import Aya, quran_phonetizer, MoshafAttributes
 from quran_muaalem.inference import Muaalem
 from quran_muaalem.muaalem_typing import MuaalemOutput
+from quran_muaalem.explain import explain_for_terminal
 from torchcodec.decoders import AudioDecoder
 
 
@@ -51,3 +53,20 @@ if __name__ == "__main__":
             print(json.dumps(asdict(sifa), indent=2, ensure_ascii=False))
             print("*" * 30)
         print("-" * 40)
+
+    # Explaining Results
+    uthmani_ref = Aya(8, 75).get_by_imlaey_words(17, 9).uthmani
+    moshaf = MoshafAttributes(
+        rewaya="hafs",
+        madd_monfasel_len=2,
+        madd_mottasel_len=4,
+        madd_mottasel_waqf=4,
+        madd_aared_len=2,
+    )
+    phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
+    explain_for_terminal(
+        outs[0].phonemes.text,
+        phonetizer_out.phonemes,
+        outs[0].sifat,
+        phonetizer_out.sifat,
+    )
