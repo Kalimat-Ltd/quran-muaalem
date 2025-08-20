@@ -4,7 +4,12 @@ import json
 import torch
 import pytest
 
-from quran_muaalem.decode import ctc_decode, CTCDecodeOut, multilevel_greedy_decode
+from quran_muaalem.decode import (
+    ctc_decode,
+    CTCDecodeOut,
+    multilevel_greedy_decode,
+    align_sequence,
+)
 from quran_muaalem.muaalem_typing import Unit, Sifa, SingleUnit
 from quran_muaalem.modeling.multi_level_tokenizer import MultiLevelTokenizer
 from quran_muaalem.inference import format_sifat
@@ -307,6 +312,23 @@ def test_multilevel_greedy_decode(level_to_probs, ex_level_to_units):
             torch.testing.assert_close(unit.probs, ex_unit.probs)
 
 
+@pytest.mark.parametrize(
+    "seq, target_len, min_repeat, ex_out",
+    [
+        (
+            [1, 1, 1, 1, 1],
+            4,
+            3,
+            [0],
+        ),
+    ],
+)
+def test_alilgn_sequence(seq, target_len, min_repeat, ex_out):
+    out = align_sequence(seq, target_len, min_repeat=min_repeat)
+    assert out == ex_out
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "level_to_units, chunked_phonemes_batch, ex_sifat_batch",
     [
