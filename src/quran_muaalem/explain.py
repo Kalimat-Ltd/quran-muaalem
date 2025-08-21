@@ -11,6 +11,7 @@ from rich.table import Table
 from rich.console import Console
 
 from .muaalem_typing import Sifa
+from .modeling.vocab import SIFAT_ATTR_TO_ARABIC_WITHOUT_BRACKETS
 
 
 @dataclass
@@ -166,7 +167,10 @@ def expalin_sifat(
     return table
 
 
-def print_sifat_table(table: list[dict]):
+def print_sifat_table(
+    table: list[dict],
+    lang: Literal["arabic", "english"] = "arabic",
+):
     """Print the sifat comparison table with rich highlighting"""
     if not table:
         return
@@ -189,6 +193,8 @@ def print_sifat_table(table: list[dict]):
         for key in base_keys:
             exp_key = f"exp_{key}"
             value = str(row[key])
+            if key != "phonemes" and lang == "arabic":
+                value = SIFAT_ATTR_TO_ARABIC_WITHOUT_BRACKETS[value]
 
             # Apply styling based on tag and comparison
             if tag == "exact" and row.get(exp_key) != row[key]:
@@ -206,7 +212,11 @@ def print_sifat_table(table: list[dict]):
 
 
 def explain_for_terminal(
-    phonemes: str, exp_phonemes: str, sifat: list[Sifa], exp_sifat: list[SifaOutput]
+    phonemes: str,
+    exp_phonemes: str,
+    sifat: list[Sifa],
+    exp_sifat: list[SifaOutput],
+    lang: Literal["arabic", "english"] = "english",
 ):
     # Create diff-match-patch object
     dmp_obj = dmp.diff_match_patch()
@@ -229,4 +239,4 @@ def explain_for_terminal(
     # Print the result
     print(result)
     sifat_table = expalin_sifat(sifat, exp_sifat, diffs)
-    print_sifat_table(sifat_table)  # Add this line to print the table
+    print_sifat_table(sifat_table, lang=lang)  # Add this line to print the table

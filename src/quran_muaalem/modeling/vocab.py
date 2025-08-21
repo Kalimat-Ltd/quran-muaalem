@@ -5,7 +5,7 @@ from typing import get_origin, get_args, Literal
 from quran_transcript import alphabet as alph
 from quran_transcript import SifaOutput
 
-SIFAT_ATTR_TO_ARABIC = {
+SIFAT_ATTR_TO_ARABIC_WITHOUT_BRACKETS = {
     "hams": "همس",
     "jahr": "جهر",
     "shadeed": "شديد",
@@ -28,7 +28,9 @@ SIFAT_ATTR_TO_ARABIC = {
     "maghnoon": "مغن",
     "not_maghnoon": "لا غنة",
 }
-SIFAT_ATTR_TO_ARABIC = {k: f"[{v}]" for k, v in SIFAT_ATTR_TO_ARABIC.items()}
+SIFAT_ATTR_TO_ARABIC = {
+    k: f"[{v}]" for k, v in SIFAT_ATTR_TO_ARABIC_WITHOUT_BRACKETS.items()
+}
 SIFAT_ATTR_TO_ENGLISH = {v: k for k, v in SIFAT_ATTR_TO_ARABIC.items()}
 
 PAD_TOKEN = "[PAD]"
