@@ -37,10 +37,11 @@ if __name__ == "__main__":
     cache_dir = "./assets/test_cache"
     sampling_rate = 16000
     audio_path = "./assets/test.wav"
+    device = "cpu"
 
     cache = load_cache(cache_dir, audio_path, reload=False)
     if not cache:
-        muaalem = Muaalem()
+        muaalem = Muaalem(device=device)
         decoder = AudioDecoder(audio_path, sample_rate=sampling_rate, num_channels=1)
         outs = muaalem(decoder.get_all_samples().data[0], sampling_rate)
         save_cache(cache_dir, audio_path, outs)
