@@ -27,9 +27,9 @@ class PhonemeGroup:
             raise ValueError("The Entire group is empty")
         if self.ref == self.out:
             self.tag = "exact"
-        elif self.ref != "":
+        elif self.ref != "" and self.out == "":
             self.tag = "delete"
-        elif self.out != "":
+        elif self.out != "" and self.ref == "":
             self.tag = "insert"
         else:
             self.tag = "partial"
