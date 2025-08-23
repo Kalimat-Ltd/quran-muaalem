@@ -1,6 +1,4 @@
-from dataclasses import dataclass
-from typing import Sequence
-
+import logging
 
 from quran_transcript import chunck_phonemes, QuranPhoneticScriptOutput
 from transformers import AutoFeatureExtractor
@@ -9,8 +7,11 @@ from numpy.typing import NDArray
 
 from .modeling.multi_level_tokenizer import MultiLevelTokenizer
 from .modeling.modeling_multi_level_ctc import Wav2Vec2BertForMultilevelCTC
-from .decode import multilevel_greedy_decode, align_sequence
-from .muaalem_typing import Unit, SingleUnit, Sifa, MuaalemOutput, SingleUnit
+from .decode import (
+    multilevel_greedy_decode,
+    phonemes_level_greedy_decode,
+)
+from .muaalem_typing import Unit, SingleUnit, Sifa, MuaalemOutput
 
 
 def format_sifat(
@@ -28,10 +29,18 @@ def format_sifat(
                 if level == "phonemes":
                     continue
                 sifa_idx = idx
-                label = int(level_to_units[level][seq_idx].ids[sifa_idx])
-                text = multi_level_tokenizer.sifat_to_en_vocab[level][label]
-                p = level_to_units[level][seq_idx].probs[sifa_idx]
-                sifa_dict[level] = SingleUnit(text=text, prob=float(p), idx=int(label))
+                if sifa_idx < len(level_to_units[level][seq_idx].ids):
+                    label = int(level_to_units[level][seq_idx].ids[sifa_idx])
+                    text = multi_level_tokenizer.sifat_to_en_vocab[level][label]
+                    p = level_to_units[level][seq_idx].probs[sifa_idx]
+                    sifa_dict[level] = SingleUnit(
+                        text=text, prob=float(p), idx=int(label)
+                    )
+                else:
+                    logging.info(
+                        f"Sequence: `{seq_idx}` has short Level: {level} we will place it with `None`"
+                    )
+                    sifa_dict[level] = None
             sifat.append(
                 Sifa(
                     phonemes_group=chunked_phonemes_batch[seq_idx][idx],
@@ -100,10 +109,24 @@ class Muaalem:
                 torch.nn.functional.softmax(outs[level], dim=-1).cpu().to(torch.float32)
             )
 
+        # Decoding only Phonemes Level
+        phonemes_units = phonemes_level_greedy_decode(
+            probs["phonemes"], self.multi_level_tokenizer.id_to_vocab["phonemes"]
+        )
+
+        chunked_phonemes_batch: list[list[str]] = []
+        for phonemes_unit in phonemes_units:
+            chunked_phonemes_batch.append(chunck_phonemes(phonemes_unit.text))
+
         level_to_units = multilevel_greedy_decode(
-            probs,
-            self.multi_level_tokenizer.id_to_vocab,
-            level_to_ref_ids,
+            level_to_probs=probs,
+            level_to_id_to_vocab=self.multi_level_tokenizer.id_to_vocab,
+            level_to_ref_ids=level_to_ref_ids,
+            chunked_phonemes_batch=chunked_phonemes_batch,
+            ref_chuncked_phonemes_batch=[
+                [s.phonemes for s in r.sifat] for r in ref_quran_phonetic_script_list
+            ],
+            phonemes_units=phonemes_units,
         )
 
         sifat_batch: list[list[Sifa]] = format_sifat(

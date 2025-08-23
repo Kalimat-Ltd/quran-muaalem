@@ -1,3 +1,4 @@
+import logging
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -35,6 +36,7 @@ def save_cache(cache_dir: str | Path, file_path: str | Path, outs: list[MuaalemO
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     cache_dir = "./assets/test_cache"
     sampling_rate = 16000
     audio_path = "./assets/test.wav"

@@ -1,3 +1,4 @@
+import logging
 from typing import Sequence, Any
 from dataclasses import dataclass
 import torch
@@ -123,6 +124,97 @@ from .muaalem_typing import Unit
 #             j -= 1
 #
 #     return res_chars[::-1]
+
+
+def align_chunked_phonemes_sequence(
+    ref: list[list[str]],
+    predicted: list[list[str]],
+) -> list[bool]:
+    """Aligns phonemes level to get mask that descripts what is missing
+
+    Returns the mask for the `ref` inputs that best matches the `predicted`
+    Note element wise comparison but retuns mask for best seqence (even with errors)
+
+    Example (1): `predicted` length > `ref` length
+        ref: abcde
+        predicted: abcdef
+        Returns: [T, T, T, T]
+
+    Example (2): `predicted` length <`ref` length
+        ref: abcde
+        predicted: abcd
+        Returns: [T, T, T, T, F]
+
+    Example (2): `predicted` length <`ref` length
+        ref: afcde
+        predicted: abcd
+        Returns: [T, T, T, T, F]
+
+
+    Len(mask] == Len(ref)
+
+    """
+
+    n = len(predicted)
+    m = len(ref)
+
+    if len(predicted) == len(ref):
+        return [True] * len(predicted)
+
+    if m == 0:
+        raise ValueError("`ref` length must not be zero length")
+
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    choice = [[0] * (m + 1) for _ in range(n + 1)]
+
+    for j in range(m + 1):
+        dp[0][j] = 0
+
+    for i in range(1, n + 1):
+        dp[i][0] = i
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            option1 = dp[i][j - 1]
+            option2 = dp[i - 1][j] + 1
+            cost = 0 if predicted[i - 1][0] == ref[j - 1][0] else 1
+            option3 = dp[i - 1][j - 1] + cost
+
+            if option3 <= option1 and option3 <= option2:
+                dp[i][j] = option3
+                choice[i][j] = 3
+            elif option1 <= option2:
+                dp[i][j] = option1
+                choice[i][j] = 1
+            else:
+                dp[i][j] = option2
+                choice[i][j] = 2
+
+    i = n
+    j = m
+    mask = []
+    # res_chars = []
+    while i > 0 or j > 0:
+        if i > 0 and j > 0:
+            if choice[i][j] == 3:
+                # res_chars.append(ref[j - 1])
+                mask.append(True)
+                i -= 1
+                j -= 1
+            elif choice[i][j] == 2:
+                # res_chars.append(missing_placeholder)
+                i -= 1
+            else:
+                j -= 1
+                mask.append(False)
+        elif i > 0:
+            # res_chars.append(missing_placeholder)
+            i -= 1
+        else:
+            j -= 1
+            mask.append(False)
+
+    return mask[::-1]
 
 
 def align_predicted_sequence(
@@ -287,15 +379,101 @@ def ctc_decode(
     return outs
 
 
+# def multilevel_greedy_decode(
+#     level_to_probs: dict[str, torch.FloatTensor],
+#     level_to_id_to_vocab: dict[str, dict[int, str]],
+#     level_to_ref_ids: dict[str, torch.LongTensor],
+#     missing_placeholder=-100,
+#     pad_idx=PAD_TOKEN_IDX,
+# ) -> dict[str, list[Unit]]:
+#     level_to_units = {}
+#     for level in level_to_probs:
+#         batch_probs, batch_ids = level_to_probs[level].topk(1, dim=-1)
+#         decode_outs = ctc_decode(
+#             batch_ids.squeeze(-1), batch_probs.squeeze(-1), collapse_consecutive=True
+#         )
+#         level_to_units[level] = []
+#         for seq_idx, decode_out in enumerate(decode_outs):
+#             # Trying to align Ids of the sifat levels
+#             if level != "phonemes":
+#                 aligned_ids, mask = align_predicted_sequence(
+#                     level_to_ref_ids[level][seq_idx],
+#                     decode_out.ids,
+#                     missing_placeholder=missing_placeholder,
+#                 )
+#             else:
+#                 aligned_ids = decode_out.ids
+#
+#             probs = decode_out.p
+#             if len(aligned_ids) != len(decode_out.ids):
+#                 aligned_ids = torch.LongTensor(aligned_ids)
+#                 mask = torch.BoolTensor(mask)
+#
+#                 new_probs = torch.zeros(len(aligned_ids), dtype=torch.float32)
+#                 new_probs[aligned_ids != missing_placeholder] = probs[mask]
+#
+#                 aligned_ids[aligned_ids == missing_placeholder] = pad_idx
+#                 probs = new_probs
+#
+#             probs = decode_out.p.clone()
+#             text = ""
+#             for idx in aligned_ids:
+#                 text += level_to_id_to_vocab[level][int(idx)]
+#             level_to_units[level].append(
+#                 Unit(
+#                     text=text,
+#                     probs=probs,
+#                     ids=aligned_ids,
+#                 ),
+#             )
+#
+#     return level_to_units
+
+
+def phonemes_level_greedy_decode(
+    probs: torch.FloatTensor,
+    phonemes_level_vocab: dict[int, str],
+) -> list[Unit]:
+    """Decodes only phonemes level
+
+    Args:
+        probs (torch.FloatTensor) of shape batch, seq_len, num_classes
+        phonmes_level_vocab (dict[int, str]): mapping ids of phonemes to the
+            acutial string represnetation
+    """
+    batch_probs, batch_ids = probs.topk(1, dim=-1)
+    decode_outs = ctc_decode(
+        batch_ids.squeeze(-1), batch_probs.squeeze(-1), collapse_consecutive=True
+    )
+    units = []
+    for seq_idx, decode_out in enumerate(decode_outs):
+        text = ""
+        for idx in decode_out.ids:
+            text += phonemes_level_vocab[int(idx)]
+        units.append(
+            Unit(
+                text=text,
+                probs=decode_out.p,
+                ids=decode_out.ids,
+            ),
+        )
+    return units
+
+
 def multilevel_greedy_decode(
     level_to_probs: dict[str, torch.FloatTensor],
     level_to_id_to_vocab: dict[str, dict[int, str]],
     level_to_ref_ids: dict[str, torch.LongTensor],
+    chunked_phonemes_batch: list[list[str]],
+    ref_chuncked_phonemes_batch: list[list[str]],
+    phonemes_units: list[Unit],
     missing_placeholder=-100,
     pad_idx=PAD_TOKEN_IDX,
 ) -> dict[str, list[Unit]]:
     level_to_units = {}
     for level in level_to_probs:
+        if level == "phonemes":
+            continue
         batch_probs, batch_ids = level_to_probs[level].topk(1, dim=-1)
         decode_outs = ctc_decode(
             batch_ids.squeeze(-1), batch_probs.squeeze(-1), collapse_consecutive=True
@@ -303,27 +481,46 @@ def multilevel_greedy_decode(
         level_to_units[level] = []
         for seq_idx, decode_out in enumerate(decode_outs):
             # Trying to align Ids of the sifat levels
-            if level != "phonemes":
-                aligned_ids, mask = align_predicted_sequence(
+            phonemes_mask = align_chunked_phonemes_sequence(
+                ref=ref_chuncked_phonemes_batch[seq_idx],
+                predicted=chunked_phonemes_batch[seq_idx],
+            )
+            phonemes_mask = torch.BoolTensor(phonemes_mask)
+
+            # NOTE:
+            # We want to align every level with predited phonme, but
+            # in some cases the length of every sifa level is > or < the
+            # length for the predited phonemes
+            # we slove this by two steps
+            # 1. Align the sifa level with length mismatch to the refrence sifa level
+            # 2. align the alinged sifa level back to the the length of prediced phonmes
+            if len(decode_out.ids) != len(chunked_phonemes_batch[seq_idx]):
+                logging.info(f"Sequence: `{seq_idx}` has mismatch Level: {level}")
+                # 1. Align sifa level to the reference sifa level
+                ref_aligned_ids, mask = align_predicted_sequence(
                     level_to_ref_ids[level][seq_idx],
                     decode_out.ids,
                     missing_placeholder=missing_placeholder,
                 )
-            else:
-                aligned_ids = decode_out.ids
 
-            probs = decode_out.p
-            if len(aligned_ids) != len(decode_out.ids):
-                aligned_ids = torch.LongTensor(aligned_ids)
+                probs = decode_out.p
+                ref_aligned_ids = torch.LongTensor(ref_aligned_ids)
                 mask = torch.BoolTensor(mask)
 
-                new_probs = torch.zeros(len(aligned_ids), dtype=torch.float32)
-                new_probs[aligned_ids != missing_placeholder] = probs[mask]
+                new_probs = torch.zeros(len(ref_aligned_ids), dtype=torch.float32)
+                new_probs[ref_aligned_ids != missing_placeholder] = probs[mask]
 
-                aligned_ids[aligned_ids == missing_placeholder] = pad_idx
+                ref_aligned_ids[ref_aligned_ids == missing_placeholder] = pad_idx
+
+                # 2. Align the predicted aligned to the ref back to the predicted seqence
+                aligned_ids = ref_aligned_ids[phonemes_mask]
+                new_probs = ref_aligned_ids[phonemes_mask]
+
                 probs = new_probs
+            else:
+                aligned_ids = decode_out.ids
+                probs = decode_out.p
 
-            probs = decode_out.p.clone()
             text = ""
             for idx in aligned_ids:
                 text += level_to_id_to_vocab[level][int(idx)]
@@ -334,6 +531,7 @@ def multilevel_greedy_decode(
                     ids=aligned_ids,
                 ),
             )
+    level_to_units["phonemes"] = phonemes_units
 
     return level_to_units
 
