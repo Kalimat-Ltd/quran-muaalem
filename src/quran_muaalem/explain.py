@@ -151,14 +151,22 @@ def expalin_sifat(
             raw["phonemes"] = sifat[group.out_idx].phonemes_group
             raw["exp_phonemes"] = exp_sifat[group.ref_idx].phonemes
             for key in keys:
-                raw[f"{key}"] = getattr(sifat[group.ref_idx], key).text
+                if getattr(sifat[group.out_idx], key) is not None:
+                    raw[f"{key}"] = getattr(sifat[group.out_idx], key).text
+                else:
+                    raw[f"{key}"] = "None"
+
                 raw[f"exp_{key}"] = getattr(exp_sifat[group.ref_idx], key)
         elif tag in {"partial", "insert"}:
             raw["tag"] = "insert"
             raw["phonemes"] = sifat[group.out_idx].phonemes_group
             raw["exp_phonemes"] = ""
             for key in keys:
-                raw[f"{key}"] = getattr(sifat[group.ref_idx], key).text
+                if getattr(sifat[group.out_idx], key) is not None:
+                    raw[f"{key}"] = getattr(sifat[group.out_idx], key).text
+                else:
+                    raw[f"{key}"] = "None"
+
                 raw[f"exp_{key}"] = ""
         if raw:
             table.append(raw)
