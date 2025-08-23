@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 
-from quran_transcript import chunck_phonemes
+from quran_transcript import chunck_phonemes, QuranPhoneticScriptOutput
 from transformers import AutoFeatureExtractor
 import torch
 from numpy.typing import NDArray
@@ -22,32 +22,16 @@ def format_sifat(
     sifat_batch = []
     for seq_idx in range(len(chunked_phonemes_batch)):
         sifat = []
-        level_to_offset = {level: 0 for level in level_to_units}
-        level_to_skip_ids = {
-            level: align_sequence(
-                level_to_units[level][seq_idx].ids,
-                len(chunked_phonemes_batch[seq_idx]),
-                min_repeat=min_repeat,
-            )
-            for level in level_to_units
-        }
         for idx, ph_group in enumerate(chunked_phonemes_batch[seq_idx]):
             sifa_dict = {}
             for level in level_to_units:
                 if level == "phonemes":
                     continue
-                if idx in level_to_skip_ids[level]:
-                    level_to_offset[level] = len(level_to_skip_ids[level])
-                sifa_idx = idx + level_to_offset[level]
-                if sifa_idx < len(level_to_units[level][seq_idx].ids):
-                    label = int(level_to_units[level][seq_idx].ids[sifa_idx])
-                    text = multi_level_tokenizer.sifat_to_en_vocab[level][label]
-                    p = level_to_units[level][seq_idx].probs[sifa_idx]
-                    sifa_dict[level] = SingleUnit(
-                        text=text, prob=float(p), idx=int(label)
-                    )
-                else:
-                    sifa_dict[level] = None
+                sifa_idx = idx
+                label = int(level_to_units[level][seq_idx].ids[sifa_idx])
+                text = multi_level_tokenizer.sifat_to_en_vocab[level][label]
+                p = level_to_units[level][seq_idx].probs[sifa_idx]
+                sifa_dict[level] = SingleUnit(text=text, prob=float(p), idx=int(label))
             sifat.append(
                 Sifa(
                     phonemes_group=chunked_phonemes_batch[seq_idx][idx],
@@ -86,11 +70,23 @@ class Muaalem:
     def __call__(
         self,
         waves: list[list[float] | torch.FloatTensor | NDArray],
+        ref_quran_phonetic_script_list: list[QuranPhoneticScriptOutput],
         sampling_rate: int,
         min_repeat=4,
     ) -> list[MuaalemOutput]:
         if sampling_rate != 16000:
             raise ValueError(f"`sampling_rate` has to be 16000 got: `{sampling_rate}`")
+
+        # TODO: check input waves
+
+        # Tokanizing Ref
+        level_to_ref_ids = self.multi_level_tokenizer.tokenize(
+            [r.phonemes for r in ref_quran_phonetic_script_list],
+            [r.sifat for r in ref_quran_phonetic_script_list],
+            to_dict=True,
+            return_tensors="pt",
+            padding="longest",
+        )["input_ids"]
 
         features = self.processor(
             waves, sampling_rate=sampling_rate, return_tensors="pt"
@@ -107,11 +103,8 @@ class Muaalem:
         level_to_units = multilevel_greedy_decode(
             probs,
             self.multi_level_tokenizer.id_to_vocab,
+            level_to_ref_ids,
         )
-
-        chunked_phonemes_batch: list[list[str]] = []
-        for phonemes_unit in level_to_units["phonemes"]:
-            chunked_phonemes_batch.append(chunck_phonemes(phonemes_unit.text))
 
         sifat_batch: list[list[Sifa]] = format_sifat(
             level_to_units,

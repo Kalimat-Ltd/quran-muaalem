@@ -1,6 +1,7 @@
 from dataclasses import asdict
 import json
 from pathlib import Path
+from time import perf_counter
 
 import torch
 
@@ -38,12 +39,27 @@ if __name__ == "__main__":
     sampling_rate = 16000
     audio_path = "./assets/test.wav"
     device = "cpu"
+    reload = True
 
-    cache = load_cache(cache_dir, audio_path, reload=False)
+    uthmani_ref = Aya(8, 75).get_by_imlaey_words(17, 9).uthmani
+    moshaf = MoshafAttributes(
+        rewaya="hafs",
+        madd_monfasel_len=2,
+        madd_mottasel_len=4,
+        madd_mottasel_waqf=4,
+        madd_aared_len=2,
+    )
+    phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
+
+    cache = load_cache(cache_dir, audio_path, reload=reload)
     if not cache:
         muaalem = Muaalem(device=device)
         decoder = AudioDecoder(audio_path, sample_rate=sampling_rate, num_channels=1)
-        outs = muaalem(decoder.get_all_samples().data[0], sampling_rate)
+        outs = muaalem(
+            [decoder.get_all_samples().data[0]],
+            [phonetizer_out],
+            sampling_rate=sampling_rate,
+        )
         save_cache(cache_dir, audio_path, outs)
     else:
         outs = cache
@@ -56,15 +72,6 @@ if __name__ == "__main__":
         print("-" * 40)
 
     # Explaining Results
-    uthmani_ref = Aya(8, 75).get_by_imlaey_words(17, 9).uthmani
-    moshaf = MoshafAttributes(
-        rewaya="hafs",
-        madd_monfasel_len=2,
-        madd_mottasel_len=4,
-        madd_mottasel_waqf=4,
-        madd_aared_len=2,
-    )
-    phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
     explain_for_terminal(
         outs[0].phonemes.text,
         phonetizer_out.phonemes,

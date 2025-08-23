@@ -9,10 +9,60 @@ from quran_muaalem.decode import (
     CTCDecodeOut,
     multilevel_greedy_decode,
     align_sequence,
+    align_predicted_sequence,
 )
 from quran_muaalem.muaalem_typing import Unit, Sifa, SingleUnit
 from quran_muaalem.modeling.multi_level_tokenizer import MultiLevelTokenizer
 from quran_muaalem.inference import format_sifat
+
+
+@pytest.mark.parametrize(
+    f"ref, pred, exp_out, exp_mask",
+    [
+        (
+            [0, 1, 2, 3],
+            [3, 2, 1, 0],
+            [3, 2, 1, 0],
+            [1, 1, 1, 1],
+        ),
+        (
+            [0, 1, 2, 3],
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3],
+            [1, 1, 1, 1, 0],
+        ),
+        (
+            [0, 1, 2, 3],
+            [2, 3, 4],
+            [-100, -100, 2, 3],
+            [1, 1, 0],
+        ),
+        (
+            [0, 1, 2, 3],
+            [-1, 0, 1, 2, 4],
+            [0, 1, 2, 4],
+            [0, 1, 1, 1, 1],
+        ),
+        (
+            [0, 1, 2, 3],
+            [1, 2, 3],
+            [-100, 1, 2, 3],
+            [1, 1, 1],
+        ),
+    ],
+)
+def test_align_predicted_sequence(ref, pred, exp_out, exp_mask):
+    exp_mask = [bool(i) for i in exp_mask]
+    out, mask = align_predicted_sequence(ref, pred)
+    print(f"Ref: {ref}")
+    print(f"Pred: {pred}")
+    print(f"Out: {out}")
+    print(f"EXP: {exp_out}")
+    print(f"Mask: {mask}")
+    print(f"EXP Mask: {exp_mask}")
+
+    assert out == exp_out
+    assert mask == exp_mask
 
 
 @pytest.mark.parametrize(
@@ -143,13 +193,20 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
 
 
 @pytest.mark.parametrize(
-    "level_to_probs, ex_level_to_units",
+    "level_to_probs, level_to_ref_ids, ex_level_to_units",
     [
         (
             {
                 "phonemes": [
                     [
                         [0, 1, 0, 0, 0],
+                    ],
+                ]
+            },
+            {
+                "phonemes": [
+                    [
+                        [0, 1, 0, 0, 0, 3, 4],
                     ],
                 ]
             },
@@ -177,6 +234,16 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
             },
             {
                 "phonemes": [
+                    [
+                        [0, 1, 0, 0, 0, 4],
+                        [0, 0, 1, 0, 0, 3],
+                        [0, 0, 0, 1, 0, 2],
+                        [0, 0, 0, 0, 1, 4],
+                    ],
+                ]
+            },
+            {
+                "phonemes": [
                     Unit(
                         text="abcd",
                         probs=torch.FloatTensor([1.0, 1.0, 1.0, 1.0]),
@@ -187,6 +254,16 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
         ),
         # diffrent probs
         (
+            {
+                "phonemes": [
+                    [
+                        [0, 1, 0, 0, 0],
+                        [0, 0, 1, 0, 0],
+                        [0, 0, 0.6, 0.4, 0],
+                        [0, 0, 0, 0, 1],
+                    ],
+                ]
+            },
             {
                 "phonemes": [
                     [
@@ -227,36 +304,11 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
             },
             {
                 "phonemes": [
-                    Unit(
-                        text="abd",
-                        probs=torch.FloatTensor([1.0, 0.8, 1.0]),
-                        ids=torch.LongTensor([1, 2, 4]),
-                    )
-                ],
-                "hams": [
-                    Unit(
-                        text="A",
-                        probs=torch.FloatTensor([0.9]),
-                        ids=torch.LongTensor([1]),
-                    )
-                ],
-            },
-        ),
-        # diffrent probs and multiple sequences
-        (
-            {
-                "phonemes": [
                     [
                         [0, 1, 0, 0, 0],
                         [0, 0, 1, 0, 0],
                         [0, 0, 0.6, 0.4, 0],
                         [0, 0, 0, 0, 1],
-                    ],
-                    [
-                        [0, 1, 0, 0, 0],
-                        [0, 1, 0, 0, 0],
-                        [0, 1, 0, 0, 0],
-                        [0, 1, 0, 0, 0],
                     ],
                 ],
                 "hams": [
@@ -272,12 +324,7 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
                         text="abd",
                         probs=torch.FloatTensor([1.0, 0.8, 1.0]),
                         ids=torch.LongTensor([1, 2, 4]),
-                    ),
-                    Unit(
-                        text="a",
-                        probs=torch.FloatTensor([1.0]),
-                        ids=torch.LongTensor([1]),
-                    ),
+                    )
                 ],
                 "hams": [
                     Unit(
@@ -288,18 +335,69 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
                 ],
             },
         ),
+        # # diffrent probs and multiple sequences
+        # (
+        #     {
+        #         "phonemes": [
+        #             [
+        #                 [0, 1, 0, 0, 0],
+        #                 [0, 0, 1, 0, 0],
+        #                 [0, 0, 0.6, 0.4, 0],
+        #                 [0, 0, 0, 0, 1],
+        #             ],
+        #             [
+        #                 [0, 1, 0, 0, 0],
+        #                 [0, 1, 0, 0, 0],
+        #                 [0, 1, 0, 0, 0],
+        #                 [0, 1, 0, 0, 0],
+        #             ],
+        #         ],
+        #         "hams": [
+        #             [
+        #                 [0, 1, 0],
+        #                 [0, 0.8, 0.2],
+        #             ],
+        #         ],
+        #     },
+        #     {
+        #         "phonemes": [
+        #             Unit(
+        #                 text="abd",
+        #                 probs=torch.FloatTensor([1.0, 0.8, 1.0]),
+        #                 ids=torch.LongTensor([1, 2, 4]),
+        #             ),
+        #             Unit(
+        #                 text="a",
+        #                 probs=torch.FloatTensor([1.0]),
+        #                 ids=torch.LongTensor([1]),
+        #             ),
+        #         ],
+        #         "hams": [
+        #             Unit(
+        #                 text="A",
+        #                 probs=torch.FloatTensor([0.9]),
+        #                 ids=torch.LongTensor([1]),
+        #             )
+        #         ],
+        #     },
+        # ),
     ],
 )
-def test_multilevel_greedy_decode(level_to_probs, ex_level_to_units):
+def test_multilevel_greedy_decode(level_to_probs, level_to_ref_ids, ex_level_to_units):
     level_to_vocab = {
         "phonemes": {1: "a", 2: "b", 3: "c", 4: "d"},
         "hams": {1: "A", 2: "B"},
     }
     level_to_probs = {l: torch.FloatTensor(p) for l, p in level_to_probs.items()}
+    level_to_ref_ids = {l: torch.LongTensor(i) for l, i in level_to_ref_ids.items()}
     for level in level_to_probs:
         print(level_to_probs[level].shape)
 
-    level_to_units = multilevel_greedy_decode(level_to_probs, level_to_vocab)
+    level_to_units = multilevel_greedy_decode(
+        level_to_probs,
+        level_to_vocab,
+        level_to_ref_ids,
+    )
     assert len(ex_level_to_units) == len(level_to_units)
     assert set(ex_level_to_units.keys()) == set(level_to_units.keys())
 

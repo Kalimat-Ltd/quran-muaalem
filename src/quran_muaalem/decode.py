@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Sequence, Any
 from dataclasses import dataclass
 import torch
 import numpy as np
@@ -6,6 +6,206 @@ from numpy.typing import NDArray
 
 from .modeling.vocab import PAD_TOKEN_IDX
 from .muaalem_typing import Unit
+
+
+# def align_predicted_sequence(
+#     ref: Sequence[Any], predicted: Sequence[Any]
+# ) -> Sequence[Any]:
+#     """Aligns the preficeted sequence to the ref sequnce
+#
+#     Example (1): `predicted` length > `ref` length
+#         ref: abcde
+#         predicted: abcdef
+#         Returns: abcde
+#
+#     Example (2): `predicted` length <`ref` length
+#         ref: abcde
+#         predicted: abcd
+#         Returns: abcde
+#
+#     Returns:
+#         Sequnce[Any]: new precicted sequence that best matches the ref sequence
+#     """
+#     n = len(ref)
+#     m = len(predicted)
+#     if n == m:
+#         return predicted
+#     if n == 0:
+#         return []
+#     if m == 0:
+#         return ref
+#
+#     dp = [[0] * (m + 1) for _ in range(n + 1)]
+#
+#     for i in range(1, n + 1):
+#         dp[i][0] = 0
+#     for j in range(1, m + 1):
+#         dp[0][j] = 0
+#
+#     for i in range(1, n + 1):
+#         for j in range(1, m + 1):
+#             insertion = dp[i - 1][j]
+#             deletion = dp[i][j - 1]
+#             match_cost = dp[i - 1][j - 1] + (1 if ref[i - 1] != predicted[j - 1] else 0)
+#             dp[i][j] = min(insertion, deletion, match_cost)
+#
+#     i, j = n, m
+#     output_chars = []
+#     while i > 0 or j > 0:
+#         if (
+#             i > 0
+#             and j > 0
+#             and ref[i - 1] == predicted[j - 1]
+#             and dp[i][j] == dp[i - 1][j - 1]
+#         ):
+#             output_chars.append(predicted[j - 1])
+#             i -= 1
+#             j -= 1
+#         elif i > 0 and dp[i][j] == dp[i - 1][j]:
+#             output_chars.append(ref[i - 1])
+#             i -= 1
+#         elif j > 0 and dp[i][j] == dp[i][j - 1]:
+#             j -= 1
+#         else:
+#             output_chars.append(predicted[j - 1])
+#             i -= 1
+#             j -= 1
+#
+#     # return "".join(output_chars[::-1])
+#     return output_chars[::-1]
+
+
+# def align_predicted_sequence(ref, predicted):
+#     n = len(ref)
+#     m = len(predicted)
+#     if m == n:
+#         return predicted
+#
+#     INF = 10**9
+#     dp = [[0] * (m + 1) for _ in range(n + 1)]
+#     choice = [[0] * (m + 1) for _ in range(n + 1)]
+#
+#     for j in range(m + 1):
+#         dp[0][j] = 0
+#
+#     for i in range(1, n + 1):
+#         dp[i][0] = INF
+#
+#     for i in range(1, n + 1):
+#         for j in range(1, m + 1):
+#             # above
+#             option1 = dp[i][j - 1]
+#             # adjacent
+#             if j >= i:
+#                 cost = 0 if predicted[j - 1] == ref[i - 1] else 1
+#                 option2 = dp[i - 1][j - 1] + cost
+#             else:
+#                 option2 = INF
+#
+#             if option2 <= option1:
+#                 dp[i][j] = option2
+#                 choice[i][j] = 1
+#             else:
+#                 dp[i][j] = option1
+#                 choice[i][j] = 0
+#
+#     print(np.array(dp))
+#     print(np.array(choice))
+#
+#     res_chars = []
+#     i, j = n, m
+#     while i > 0 and j > 0:
+#         if choice[i][j] == 1:
+#             res_chars.append(predicted[j - 1])
+#             i -= 1
+#             j -= 1
+#         else:
+#             j -= 1
+#
+#     return res_chars[::-1]
+
+
+def align_predicted_sequence(
+    ref: Sequence[Any] | torch.LongTensor,
+    predicted: Sequence[Any] | torch.LongTensor,
+    missing_placeholder=-100,
+) -> Sequence[Any] | torch.LongTensor:
+    """Aligns the preficeted sequence to the ref sequnce
+
+    Example (1): `predicted` length > `ref` length
+        ref: abcde
+        predicted: abcdef
+        Returns: abcde
+
+    Example (2): `predicted` length <`ref` length
+        ref: abcde
+        predicted: abcd
+        Returns: abcd(missing_placeholder)
+
+    Returns:
+        Sequnce[Any]: new precicted sequence that best matches the ref sequence
+    """
+
+    n = len(ref)
+    m = len(predicted)
+
+    if len(ref) == len(predicted):
+        return predicted, [True] * len(ref)
+
+    if m == 0:
+        return [missing_placeholder] * n
+
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    choice = [[0] * (m + 1) for _ in range(n + 1)]
+
+    for j in range(m + 1):
+        dp[0][j] = 0
+
+    for i in range(1, n + 1):
+        dp[i][0] = i
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            option1 = dp[i][j - 1]
+            option2 = dp[i - 1][j] + 1
+            cost = 0 if ref[i - 1] == predicted[j - 1] else 1
+            option3 = dp[i - 1][j - 1] + cost
+
+            if option3 <= option1 and option3 <= option2:
+                dp[i][j] = option3
+                choice[i][j] = 3
+            elif option1 <= option2:
+                dp[i][j] = option1
+                choice[i][j] = 1
+            else:
+                dp[i][j] = option2
+                choice[i][j] = 2
+
+    i = n
+    j = m
+    mask = []
+    res_chars = []
+    while i > 0 or j > 0:
+        if i > 0 and j > 0:
+            if choice[i][j] == 3:
+                res_chars.append(predicted[j - 1])
+                mask.append(True)
+                i -= 1
+                j -= 1
+            elif choice[i][j] == 2:
+                res_chars.append(missing_placeholder)
+                i -= 1
+            else:
+                j -= 1
+                mask.append(False)
+        elif i > 0:
+            res_chars.append(missing_placeholder)
+            i -= 1
+        else:
+            j -= 1
+            mask.append(False)
+
+    return res_chars[::-1], mask[::-1]
 
 
 @dataclass
@@ -90,6 +290,9 @@ def ctc_decode(
 def multilevel_greedy_decode(
     level_to_probs: dict[str, torch.FloatTensor],
     level_to_id_to_vocab: dict[str, dict[int, str]],
+    level_to_ref_ids: dict[str, torch.LongTensor],
+    missing_placeholder=-100,
+    pad_idx=PAD_TOKEN_IDX,
 ) -> dict[str, list[Unit]]:
     level_to_units = {}
     for level in level_to_probs:
@@ -98,12 +301,38 @@ def multilevel_greedy_decode(
             batch_ids.squeeze(-1), batch_probs.squeeze(-1), collapse_consecutive=True
         )
         level_to_units[level] = []
-        for decode_out in decode_outs:
+        for seq_idx, decode_out in enumerate(decode_outs):
+            # Trying to align Ids of the sifat levels
+            if level != "phonemes":
+                aligned_ids, mask = align_predicted_sequence(
+                    level_to_ref_ids[level][seq_idx],
+                    decode_out.ids,
+                    missing_placeholder=missing_placeholder,
+                )
+            else:
+                aligned_ids = decode_out.ids
+
+            probs = decode_out.p
+            if len(aligned_ids) != len(decode_out.ids):
+                aligned_ids = torch.LongTensor(aligned_ids)
+                mask = torch.BoolTensor(mask)
+
+                new_probs = torch.zeros(len(aligned_ids), dtype=torch.float32)
+                new_probs[aligned_ids != missing_placeholder] = probs[mask]
+
+                aligned_ids[aligned_ids == missing_placeholder] = pad_idx
+                probs = new_probs
+
+            probs = decode_out.p.clone()
             text = ""
-            for idx in decode_out.ids:
+            for idx in aligned_ids:
                 text += level_to_id_to_vocab[level][int(idx)]
             level_to_units[level].append(
-                Unit(text=text, probs=decode_out.p, ids=decode_out.ids)
+                Unit(
+                    text=text,
+                    probs=probs,
+                    ids=aligned_ids,
+                ),
             )
 
     return level_to_units
