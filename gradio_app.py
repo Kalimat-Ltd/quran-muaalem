@@ -1,24 +1,21 @@
-import gradio as gr
 import logging
 from dataclasses import asdict
 import json
-from pathlib import Path
-from time import perf_counter
-import torch
 from typing import Literal, Optional, Any, get_origin, get_args
-from pydantic.fields import FieldInfo, PydanticUndefined
-
 
 from quran_transcript import Aya, quran_phonetizer, MoshafAttributes
-from quran_muaalem.inference import Muaalem
-from quran_muaalem.muaalem_typing import MuaalemOutput
-from quran_muaalem.explain import explain_for_terminal
-from torchcodec.decoders import AudioDecoder
 from quran_transcript.utils import PartOfUthmaniWord
 from quran_transcript.phonetics.moshaf_attributes import (
     get_arabic_attributes,
     get_arabic_name,
 )
+from torchcodec.decoders import AudioDecoder
+from pydantic.fields import FieldInfo, PydanticUndefined
+import gradio as gr
+
+from quran_muaalem.inference import Muaalem
+from quran_muaalem.muaalem_typing import MuaalemOutput
+from quran_muaalem.explain import explain_for_terminal
 
 # Initialize components
 REQUIRED_MOSHAF_FIELDS = [
@@ -296,7 +293,7 @@ with gr.Blocks(title="Quran Recitation Analysis") as app:
                     elem_id="start_idx",
                 )
                 num_words = gr.Number(
-                    value=5,
+                    value=4,
                     label="Number of Words",
                     minimum=1,
                     step=1,
