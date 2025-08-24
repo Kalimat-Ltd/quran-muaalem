@@ -58,7 +58,7 @@ REQUIRED_MOSHAF_FIELDS = [
     "raa_yasr",
     "meem_mokhfah",
 ]
-model_id = "obadx/muaalem-model-v3"
+model_id = "obadx/muaalem-model-v3_1"
 logging.basicConfig(level=logging.INFO)
 device = "cpu"
 muaalem = Muaalem(model_name_or_path=model_id, device=device)
