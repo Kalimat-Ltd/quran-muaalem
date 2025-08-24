@@ -217,8 +217,8 @@ def process_audio(audio, sura_idx, aya_idx, start_idx, num_words):
 
     except PartOfUthmaniWord as e:
         return f"⚠️ Error: The selected word range includes partial Uthmani words. Please adjust the number of words to include complete words only.\n\nError details: {str(e)}"
-    except Exception as e:
-        return f"Error processing audio: {str(e)}"
+    # except Exception as e:
+    #     return f"Error processing audio: {str(e)}"
 
 
 def update_moshaf_settings(*args):
