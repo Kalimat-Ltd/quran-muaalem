@@ -494,7 +494,10 @@ def multilevel_greedy_decode(
             # we slove this by two steps
             # 1. Align the sifa level with length mismatch to the refrence sifa level
             # 2. align the alinged sifa level back to the the length of prediced phonmes
-            if len(decode_out.ids) != len(chunked_phonemes_batch[seq_idx]):
+            if len(decode_out.ids) != len(chunked_phonemes_batch[seq_idx]) and len(
+                chunked_phonemes_batch[seq_idx]
+                <= len(ref_chuncked_phonemes_batch[seq_idx])
+            ):
                 logging.info(f"Sequence: `{seq_idx}` has mismatch Level: {level}")
                 # 1. Align sifa level to the reference sifa level
                 ref_aligned_ids, mask = align_predicted_sequence(
