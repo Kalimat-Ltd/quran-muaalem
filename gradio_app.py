@@ -389,4 +389,4 @@ with gr.Blocks(title="Quran Recitation Analysis") as app:
         )
 
 if __name__ == "__main__":
-    app.launch(server_name="0.0.0.0")
+    app.launch(server_name="0.0.0.0", share=True)
