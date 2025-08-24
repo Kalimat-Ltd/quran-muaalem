@@ -16,6 +16,7 @@ import gradio as gr
 from quran_muaalem.inference import Muaalem
 from quran_muaalem.muaalem_typing import MuaalemOutput
 from quran_muaalem.explain import explain_for_terminal
+from quran_muaalem.explain_gradio import explain_for_gradio
 
 # Initialize components
 REQUIRED_MOSHAF_FIELDS = [
@@ -196,23 +197,23 @@ def process_audio(audio, sura_idx, aya_idx, start_idx, num_words):
             sampling_rate=sampling_rate,
         )
 
-        # Prepare output
-        output_text = f"Phonemes: {outs[0].phonemes}\n\n"
-        for sifa in outs[0].sifat:
-            output_text += json.dumps(asdict(sifa), indent=2, ensure_ascii=False) + "\n"
-            output_text += "*" * 30 + "\n"
-        output_text += "-" * 40 + "\n\n"
+        # # Prepare output
+        # output_text = f"Phonemes: {outs[0].phonemes}\n\n"
+        # for sifa in outs[0].sifat:
+        #     output_text += json.dumps(asdict(sifa), indent=2, ensure_ascii=False) + "\n"
+        #     output_text += "*" * 30 + "\n"
+        # output_text += "-" * 40 + "\n\n"
 
         # Add explanation
-        explanation = explain_for_terminal(
+        explanation_html = explain_for_gradio(
             outs[0].phonemes.text,
             phonetizer_out.phonemes,
             outs[0].sifat,
             phonetizer_out.sifat,
         )
-        output_text += f"Explanation:\n{explanation}"
 
-        return output_text
+        return explanation_html
+
     except PartOfUthmaniWord as e:
         return f"⚠️ Error: The selected word range includes partial Uthmani words. Please adjust the number of words to include complete words only.\n\nError details: {str(e)}"
     except Exception as e:
@@ -316,11 +317,9 @@ with gr.Blocks(title="Quran Recitation Analysis") as app:
                 analyze_btn = gr.Button(
                     "Analyze Recitation", variant="primary", elem_id="analyze_btn"
                 )
-                output_text = gr.Textbox(
+                output_html = gr.HTML(
                     label="Analysis Results",
-                    lines=20,
-                    max_lines=50,
-                    elem_id="output_text",
+                    elem_id="output_html",
                 )
 
         # Initial update of uthmani text
@@ -351,7 +350,7 @@ with gr.Blocks(title="Quran Recitation Analysis") as app:
         analyze_btn.click(
             process_audio,
             inputs=[audio_input, sura_dropdown, aya_dropdown, start_idx, num_words],
-            outputs=output_text,
+            outputs=output_html,
         )
 
     with gr.Tab("إعدادات المصحف - Moshaf Settings"):
