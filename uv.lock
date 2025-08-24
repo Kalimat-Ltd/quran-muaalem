@@ -1507,8 +1507,6 @@ version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "diff-match-patch" },
-    { name = "gradio" },
-    { name = "moviepy" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "quran-transcript" },
@@ -1532,12 +1530,10 @@ ui = [
 requires-dist = [
     { name = "diff-match-patch", specifier = ">=20241021" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=5.43.1" },
-    { name = "gradio", extras = ["ui"], specifier = ">=5.43.1" },
     { name = "moviepy", marker = "extra == 'ui'", specifier = ">=2.2.1" },
-    { name = "moviepy", extras = ["ui"], specifier = ">=2.2.1" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "pytest", marker = "extra == 'test'" },
-    { name = "quran-transcript", specifier = ">=0.0.2" },
+    { name = "quran-transcript", specifier = ">=0.1.0" },
     { name = "rich", specifier = ">=14.1.0" },
     { name = "torch", specifier = ">=2.7.0" },
     { name = "torchcodec", marker = "extra == 'test'", specifier = ">=0.6.0" },
@@ -1548,7 +1544,7 @@ provides-extras = ["test", "ui"]
 
 [[package]]
 name = "quran-transcript"
-version = "0.0.2"
+version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "levenshtein" },
@@ -1556,9 +1552,9 @@ dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
     { name = "xmltodict" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/50/7e/32595bdb26d9ad272ae71eb3f63457be491ee35ab280ca36d4643040dd1b/quran_transcript-0.0.2.tar.gz", hash = "sha256:d17756e99d414631ec53ead4887aa174f4f364712c1b33d5cd06a7e3a65c20da", size = 3839460, upload-time = "2025-08-16T14:41:50.332Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/84/464438760c990ba721827b292126b8e904cb42f01c4b00b2ef3e5f7d72fb/quran_transcript-0.1.0.tar.gz", hash = "sha256:0de6fb351bba5c8da6dfdef7773f76ab5468989dd3570fc3cb35170da2a0f6ef", size = 3839541, upload-time = "2025-08-24T15:39:04.318Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/fe/f7883175ac0461f132c95494c64dc47ea32b881d0191ad80b749f78d4e66/quran_transcript-0.0.2-py3-none-any.whl", hash = "sha256:f4e24ca59fd74c5dfaf89af63c3e29f042050915d7568374788047b795eb35b0", size = 3912814, upload-time = "2025-08-16T14:41:25.412Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/64/09135b06ba93c9452250334677f85d9d1da380dea4478037b90939986624/quran_transcript-0.1.0-py3-none-any.whl", hash = "sha256:f43b1843739a9f8cf4f4f4a85ef131514a1f936e9034676becaebeddadad0262", size = 3912867, upload-time = "2025-08-24T15:38:41.236Z" },
 ]
 
 [[package]]
