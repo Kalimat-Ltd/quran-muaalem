@@ -39,6 +39,11 @@ test = [
   "pytest",
   "torchcodec>=0.6.0",
 ]
+ui = [
+    "gradio>=5.43.1",
+    "moviepy>=2.2.1",
+    "torchcodec>=0.6.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/obadx/quran-muaalem"

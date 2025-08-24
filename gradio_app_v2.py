@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 from time import perf_counter
 import torch
+from typing import Literal, Optional, Any, get_origin, get_args
+from pydantic.fields import FieldInfo, PydanticUndefined
+
 
 from quran_transcript import Aya, quran_phonetizer, MoshafAttributes
 from quran_muaalem.inference import Muaalem
@@ -12,8 +15,51 @@ from quran_muaalem.muaalem_typing import MuaalemOutput
 from quran_muaalem.explain import explain_for_terminal
 from torchcodec.decoders import AudioDecoder
 from quran_transcript.utils import PartOfUthmaniWord
+from quran_transcript.phonetics.moshaf_attributes import (
+    get_arabic_attributes,
+    get_arabic_name,
+)
 
 # Initialize components
+REQUIRED_MOSHAF_FIELDS = [
+    "rewaya",
+    "takbeer",
+    "madd_monfasel_len",
+    "madd_mottasel_len",
+    "madd_mottasel_waqf",
+    "madd_aared_len",
+    "madd_alleen_len",
+    "ghonna_lam_and_raa",
+    "meem_aal_imran",
+    "madd_yaa_alayn_alharfy",
+    "saken_before_hamz",
+    "sakt_iwaja",
+    "sakt_marqdena",
+    "sakt_man_raq",
+    "sakt_bal_ran",
+    "sakt_maleeyah",
+    "between_anfal_and_tawba",
+    "noon_and_yaseen",
+    "yaa_ataan",
+    "start_with_ism",
+    "yabsut",
+    "bastah",
+    "almusaytirun",
+    "bimusaytir",
+    "tasheel_or_madd",
+    "yalhath_dhalik",
+    "irkab_maana",
+    "noon_tamnna",
+    "harakat_daaf",
+    "alif_salasila",
+    "idgham_nakhluqkum",
+    "raa_firq",
+    "raa_alqitr",
+    "raa_misr",
+    "raa_nudhur",
+    "raa_yasr",
+    "meem_mokhfah",
+]
 logging.basicConfig(level=logging.INFO)
 device = "cpu"
 muaalem = Muaalem(device=device)
@@ -28,14 +74,80 @@ for sura_idx in range(1, 115):
     sura_idx_to_name[sura_idx] = start_aya.get().sura_name
     sura_to_aya_count[sura_idx] = start_aya.get().num_ayat_in_sura
 
-moshaf = MoshafAttributes(
+# Default moshaf settings
+default_moshaf = MoshafAttributes(
     rewaya="hafs",
-    madd_monfasel_len=2,
+    madd_monfasel_len=4,
     madd_mottasel_len=4,
     madd_mottasel_waqf=4,
-    madd_aared_len=2,
-    sakt_man_raq="idraj",
+    madd_aared_len=4,
 )
+
+# Current moshaf settings (will be updated from settings page)
+current_moshaf = default_moshaf
+
+
+def get_field_name(field_name: str, field_info: FieldInfo) -> str:
+    """Return the Arabic name of the field if applicable else the field_name"""
+    label = field_name
+    arabic_name = get_arabic_name(field_info)
+    if arabic_name:
+        label = f"{arabic_name} ({field_name})"
+    return label
+
+
+def create_gradio_input_for_field(
+    field_name: str,
+    field_info: FieldInfo,
+    default_value: Any = None,
+    key_prefix="model_",
+    help: str | None = None,
+) -> Any:
+    """Create a gradio input field given a pydantic field info"""
+    # Extract Arabic name from field description if available
+    label = get_field_name(field_name, field_info)
+
+    if default_value is None:
+        if field_info.default != PydanticUndefined:
+            default_value = field_info.default
+
+    if help is None:
+        help = field_info.description
+
+    # Handle Literal types
+    if get_origin(field_info.annotation) is Literal:
+        choices = list(get_args(field_info.annotation))
+        arabic_attributes = get_arabic_attributes(field_info)
+
+        # Create choice list with Arabic labels if available
+        choice_list = []
+        for choice in choices:
+            if arabic_attributes and choice in arabic_attributes:
+                choice_list.append((arabic_attributes[choice], choice))
+            else:
+                choice_list.append((str(choice), choice))
+
+        return gr.Dropdown(
+            choices=choice_list,
+            value=default_value,
+            label=label,
+            info=help,
+            interactive=True,
+        )
+
+    # Handle different field types
+    if field_info.annotation in [str, Optional[str]]:
+        return gr.Textbox(value=default_value or "", label=label, info=help)
+    elif field_info.annotation in [int, Optional[int]]:
+        return gr.Number(value=default_value or 0, label=label, info=help, precision=0)
+    elif field_info.annotation in [float, Optional[float]]:
+        return gr.Number(
+            value=default_value or 0.0, label=label, info=help, precision=1
+        )
+    elif field_info.annotation in [bool, Optional[bool]]:
+        return gr.Checkbox(value=default_value or False, label=label, info=help)
+
+    raise ValueError(f"Unsupported field type for {label}: {field_info.annotation}")
 
 
 def update_aya_dropdown(sura_idx):
@@ -63,6 +175,8 @@ def update_uthmani_ref(sura_idx, aya_idx, start_idx, num_words):
 
 
 def process_audio(audio, sura_idx, aya_idx, start_idx, num_words):
+    global current_moshaf
+
     if audio is None:
         return "Please upload an audio file first"
 
@@ -73,7 +187,9 @@ def process_audio(audio, sura_idx, aya_idx, start_idx, num_words):
             .get_by_imlaey_words(int(start_idx), int(num_words))
             .uthmani
         )
-        phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
+        phonetizer_out = quran_phonetizer(
+            uthmani_ref, current_moshaf, remove_spaces=True
+        )
 
         # Process audio
         decoder = AudioDecoder(audio, sample_rate=sampling_rate, num_channels=1)
@@ -102,100 +218,178 @@ def process_audio(audio, sura_idx, aya_idx, start_idx, num_words):
         return output_text
     except PartOfUthmaniWord as e:
         return f"⚠️ Error: The selected word range includes partial Uthmani words. Please adjust the number of words to include complete words only.\n\nError details: {str(e)}"
-    # except Exception as e:
-    #     return f"Error processing audio: {str(e)}"
+    except Exception as e:
+        return f"Error processing audio: {str(e)}"
 
 
+def update_moshaf_settings(*args):
+    """Update the global moshaf settings with values from the settings page"""
+    global current_moshaf, field_names
+
+    try:
+        # Create a dictionary from the field names and values
+        settings_dict = dict(zip(field_names, args))
+
+        # Create a new MoshafAttributes object with the updated values
+        current_moshaf = MoshafAttributes(**settings_dict)
+        return "✅ تم حفظ الإعدادات بنجاح - Settings saved successfully!"
+    except Exception as e:
+        return f"❌ خطأ في حفظ الإعدادات - Error saving settings: {str(e)}"
+
+
+def reset_settings():
+    """Reset all settings to default values"""
+    global current_moshaf
+
+    try:
+        current_moshaf = default_moshaf
+        # Return default values for all fields
+        default_values = [
+            getattr(default_moshaf, field_name) for field_name in field_names
+        ]
+        return default_values + [
+            "✅ تم إعادة التعيين إلى الإعدادات الافتراضية - Reset to default settings successfully!"
+        ]
+    except Exception as e:
+        return [getattr(current_moshaf, field_name) for field_name in field_names] + [
+            f"❌ Error resetting settings: {str(e)}"
+        ]
+
+
+# Create the Gradio app
 with gr.Blocks(title="Quran Recitation Analysis") as app:
-    gr.Markdown("# Quran Recitation Analysis Tool")
-    gr.Markdown(
-        "Select the Sura, Aya, and word range, then upload an audio recording of the recitation for analysis."
-    )
+    # Store current moshaf settings in session state
+    current_moshaf_state = gr.State(default_moshaf)
 
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### Quran Reference")
+    # Initialize field names list
+    field_names = []
 
-            # Create sura dropdown with both index and name
-            sura_choices = [
-                (f"{idx} - {sura_idx_to_name[idx]}", idx) for idx in range(1, 115)
-            ]
-            sura_dropdown = gr.Dropdown(
-                choices=sura_choices, label="Sura", value=1, elem_id="sura_dropdown"
-            )
+    with gr.Tab("التحليل الرئيسي - Main Analysis"):
+        gr.Markdown("# Quran Recitation Analysis Tool")
+        gr.Markdown(
+            "Select the Sura, Aya, and word range, then upload an audio recording of the recitation for analysis."
+        )
 
-            aya_dropdown = gr.Dropdown(
-                choices=list(range(1, sura_to_aya_count[1] + 1)),
-                label="Aya Number",
-                value=1,
-                elem_id="aya_dropdown",
-            )
-            start_idx = gr.Number(
-                value=0,
-                label="Start Word Index",
-                minimum=0,
-                step=1,
-                elem_id="start_idx",
-            )
-            num_words = gr.Number(
-                value=5,
-                label="Number of Words",
-                minimum=1,
-                step=1,
-                elem_id="num_words",
-            )
-            uthmani_text = gr.Textbox(
-                label="Uthmani Reference Text",
-                interactive=False,
-                elem_id="uthmani_text",
-            )
+        with gr.Row():
+            with gr.Column(scale=1):
+                gr.Markdown("### Quran Reference")
 
-        with gr.Column(scale=2):
-            gr.Markdown("### Audio Input & Analysis")
-            audio_input = gr.Audio(
-                sources=["upload", "microphone"],
-                label="Upload or Record Audio",
-                type="filepath",
-                elem_id="audio_input",
-            )
-            analyze_btn = gr.Button(
-                "Analyze Recitation", variant="primary", elem_id="analyze_btn"
-            )
-            output_text = gr.Textbox(
-                label="Analysis Results", lines=20, max_lines=50, elem_id="output_text"
-            )
+                # Create sura dropdown with both index and name
+                sura_choices = [
+                    (f"{idx} - {sura_idx_to_name[idx]}", idx) for idx in range(1, 115)
+                ]
+                sura_dropdown = gr.Dropdown(
+                    choices=sura_choices, label="Sura", value=1, elem_id="sura_dropdown"
+                )
 
-    # Initial update of uthmani text
-    app.load(
-        update_uthmani_ref,
-        inputs=[sura_dropdown, aya_dropdown, start_idx, num_words],
-        outputs=uthmani_text,
-    )
+                aya_dropdown = gr.Dropdown(
+                    choices=list(range(1, sura_to_aya_count[1] + 1)),
+                    label="Aya Number",
+                    value=1,
+                    elem_id="aya_dropdown",
+                )
+                start_idx = gr.Number(
+                    value=0,
+                    label="Start Word Index",
+                    minimum=0,
+                    step=1,
+                    elem_id="start_idx",
+                )
+                num_words = gr.Number(
+                    value=5,
+                    label="Number of Words",
+                    minimum=1,
+                    step=1,
+                    elem_id="num_words",
+                )
+                uthmani_text = gr.Textbox(
+                    label="Uthmani Reference Text",
+                    interactive=False,
+                    elem_id="uthmani_text",
+                )
 
-    # Update aya dropdown when sura changes and reset aya_idx to 1
-    sura_dropdown.change(
-        update_aya_dropdown, inputs=sura_dropdown, outputs=aya_dropdown
-    ).then(
-        update_uthmani_ref,
-        inputs=[sura_dropdown, aya_dropdown, start_idx, num_words],
-        outputs=uthmani_text,
-    )
+            with gr.Column(scale=2):
+                gr.Markdown("### Audio Input & Analysis")
+                audio_input = gr.Audio(
+                    sources=["upload", "microphone"],
+                    label="Upload or Record Audio",
+                    type="filepath",
+                    elem_id="audio_input",
+                )
+                analyze_btn = gr.Button(
+                    "Analyze Recitation", variant="primary", elem_id="analyze_btn"
+                )
+                output_text = gr.Textbox(
+                    label="Analysis Results",
+                    lines=20,
+                    max_lines=50,
+                    elem_id="output_text",
+                )
 
-    # Update uthmani text when any parameter changes
-    for component in [aya_dropdown, start_idx, num_words]:
-        component.change(
+        # Initial update of uthmani text
+        app.load(
             update_uthmani_ref,
             inputs=[sura_dropdown, aya_dropdown, start_idx, num_words],
             outputs=uthmani_text,
         )
 
-    # Process audio when button is clicked
-    analyze_btn.click(
-        process_audio,
-        inputs=[audio_input, sura_dropdown, aya_dropdown, start_idx, num_words],
-        outputs=output_text,
-    )
+        # Update aya dropdown when sura changes and reset aya_idx to 1
+        sura_dropdown.change(
+            update_aya_dropdown, inputs=sura_dropdown, outputs=aya_dropdown
+        ).then(
+            update_uthmani_ref,
+            inputs=[sura_dropdown, aya_dropdown, start_idx, num_words],
+            outputs=uthmani_text,
+        )
+
+        # Update uthmani text when any parameter changes
+        for component in [aya_dropdown, start_idx, num_words]:
+            component.change(
+                update_uthmani_ref,
+                inputs=[sura_dropdown, aya_dropdown, start_idx, num_words],
+                outputs=uthmani_text,
+            )
+
+        # Process audio when button is clicked
+        analyze_btn.click(
+            process_audio,
+            inputs=[audio_input, sura_dropdown, aya_dropdown, start_idx, num_words],
+            outputs=output_text,
+        )
+
+    with gr.Tab("إعدادات المصحف - Moshaf Settings"):
+        gr.Markdown("# إعدادات خصائص المصحف")
+        gr.Markdown("قم بتعديل خصائص المصحف حسب التلاوة المطلوبة")
+
+        # Create settings inputs directly in the tab
+        settings_components = []
+        fields = MoshafAttributes.model_fields
+
+        # Create inputs for all required fields
+        for field_name in REQUIRED_MOSHAF_FIELDS:
+            field_info = fields[field_name]
+            input_component = create_gradio_input_for_field(
+                field_name, field_info, getattr(default_moshaf, field_name, None)
+            )
+            settings_components.append(input_component)
+            field_names.append(field_name)
+
+        # Save button and status message
+        with gr.Row():
+            save_btn = gr.Button("حفظ الإعدادات - Save Settings", variant="primary")
+            reset_btn = gr.Button("إعادة التعيين - Reset to Default")
+
+        status_message = gr.Markdown()
+
+        # Save settings event
+        save_btn.click(
+            update_moshaf_settings, inputs=settings_components, outputs=status_message
+        )
+
+        # Reset to default event
+        reset_btn.click(
+            reset_settings, inputs=[], outputs=settings_components + [status_message]
+        )
 
 if __name__ == "__main__":
     app.launch(server_name="0.0.0.0")
-
