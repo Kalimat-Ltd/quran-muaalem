@@ -37,11 +37,13 @@ classifiers = [
 
 test = [
   "librosa>=0.11.0",
+  "numba>=0.61.2",
   "pytest",
 ]
 ui = [
     "gradio>=5.43.1",
     "librosa>=0.11.0",
+    "numba>=0.61.2",
     "moviepy>=2.2.1",
 ]
 
