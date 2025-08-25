@@ -45,6 +45,10 @@ ui = [
     "torchcodec>=0.6.0",
 ]
 
+
+[project.scripts]
+quran-muaalem-ui = "quran_muaalem.gradio_app:main"
+
 [project.urls]
 Homepage = "https://github.com/obadx/quran-muaalem"
 Issues = "https://github.com/obadx/quran-muaalem/issues"

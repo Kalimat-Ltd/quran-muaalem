@@ -388,5 +388,11 @@ with gr.Blocks(title="Quran Recitation Analysis") as app:
             reset_settings, inputs=[], outputs=settings_components + [status_message]
         )
 
-if __name__ == "__main__":
+
+def main(app=app):
     app.launch(server_name="0.0.0.0", share=True)
+
+
+if __name__ == "__main__":
+    main()
+    # app.launch(server_name="0.0.0.0", share=True)

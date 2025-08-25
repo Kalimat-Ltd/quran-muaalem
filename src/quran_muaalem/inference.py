@@ -18,7 +18,6 @@ def format_sifat(
     level_to_units: dict[str, list[Unit]],
     chunked_phonemes_batch: list[list[str]],
     multi_level_tokenizer: MultiLevelTokenizer,
-    min_repeat=4,
 ) -> list[list[Sifa]]:
     sifat_batch = []
     for seq_idx in range(len(chunked_phonemes_batch)):
@@ -81,8 +80,50 @@ class Muaalem:
         waves: list[list[float] | torch.FloatTensor | NDArray],
         ref_quran_phonetic_script_list: list[QuranPhoneticScriptOutput],
         sampling_rate: int,
-        min_repeat=4,
     ) -> list[MuaalemOutput]:
+        """Infrence Funcion for the Quran Muaalem Project
+
+                waves: input waves  batch , seq_len with different formats described above
+                ref_quran_phonetic_script_list (list[QuranPhoneticScriptOutput]): list of the
+                    phonetized ouput of `quran_transcript.quran_phonetizer` with `remove_space=True`
+
+                sampleing_rate (int): has to be 16000
+
+        Returns:
+            list[MuaalemOutput]:
+                A list of output objects, each containing phoneme predictions and their
+                phonetic features (sifat) for a processed input.
+
+            Each MuaalemOutput contains:
+                phonemes (Unit):
+                    A dataclass representing the predicted phoneme sequence with:
+                        text (str): Concatenated string of all phonemes.
+                        probs (Union[torch.FloatTensor, list[float]]):
+                            Confidence probabilities for each predicted phoneme.
+                        ids (Union[torch.LongTensor, list[int]]):
+                            Token IDs corresponding to each phoneme.
+
+                sifat (list[Sifa]):
+                    A list of phonetic feature dataclasses (one per phoneme) with the
+                    following optional properties (each is a SingleUnit or None):
+                        - phonemes_group (str): the phonemes associated with the `sifa`
+                        - hams_or_jahr (SingleUnit): either `hams` or `jahr`
+                        - shidda_or_rakhawa (SingleUnit): either `shadeed`, `between`, or `rikhw`
+                        - tafkheem_or_taqeeq (SingleUnit): either `mofakham`, `moraqaq`, or `low_mofakham`
+                        - itbaq (SingleUnit): either `monfateh`, or `motbaq`
+                        - safeer (SingleUnit): either `safeer`, or `no_safeer`
+                        - qalqla (SingleUnit): eithr `moqalqal`, or `not_moqalqal`
+                        - tikraar (SingleUnit): either `mokarar` or `not_mokarar`
+                        - tafashie (SingleUnit): either `motafashie`, or `not_motafashie`
+                        - istitala (SingleUnit): either `mostateel`, or `not_mostateel`
+                        - ghonna (SingleUnit): either `maghnoon`, or `not_maghnoon`
+
+            Each SingleUnit in Sifa properties contains:
+                text (str): The feature's categorical label (e.g., "hams", "shidda").
+                prob (float): Confidence probability for this feature.
+                idx (int): Identifier for the feature class.
+        """
+
         if sampling_rate != 16000:
             raise ValueError(f"`sampling_rate` has to be 16000 got: `{sampling_rate}`")
 
@@ -133,7 +174,6 @@ class Muaalem:
             level_to_units,
             chunked_phonemes_batch,
             self.multi_level_tokenizer,
-            min_repeat=min_repeat,
         )
 
         outs = []
