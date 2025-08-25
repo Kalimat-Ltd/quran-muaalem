@@ -40,6 +40,8 @@
   </p>
 </div>
 
+[![ALT_TEXT](https://img.youtube.com/vi/CsFoznO08-Q/0.jpg)](https://www.youtube.com/watch?v=CsFoznO08-Q)
+
 
 ## الممزيات
 
@@ -112,7 +114,7 @@ First, install the required dependencies:
 sudo apt-get install -y ffmpeg libsndfile1 portaudio19-dev
 
 # Install Python packages
-pip install quran-muaalem torchcodec
+pip install quran-muaalem librosa "numba>=0.61.2"
 ```
 
 ## Basic Usage Example
@@ -128,7 +130,7 @@ import logging
 
 from quran_transcript import Aya, quran_phonetizer, MoshafAttributes
 import torch
-from torchcodec.decoders import AudioDecoder
+from librosa.core import load
 
 # Import the main Muaalem class (adjust import based on your actual package structure)
 from quran_muaalem import Muaalem
@@ -169,13 +171,12 @@ def analyze_recitation(audio_path):
     muaalem = Muaalem(device=device)
     
     # Step 5: Load and prepare the audio
-    decoder = AudioDecoder(audio_path, sample_rate=sampling_rate, num_channels=1)
-    audio_samples = decoder.get_all_samples().data[0]
+    wave, _ = load(audio_path, sr=sampling_rate, mono=True)
     
     # Step 6: Process the audio with the model
     # The model analyzes the phonetic properties of the recitation
     outs = muaalem(
-        [audio_samples],           # Audio data
+        [wave],           # Audio data
         [phonetizer_out],          # Phonetic reference
         sampling_rate=sampling_rate
     )
