@@ -11,6 +11,7 @@ from quran_transcript.phonetics.moshaf_attributes import (
 )
 from torchcodec.decoders import AudioDecoder
 from pydantic.fields import FieldInfo, PydanticUndefined
+import torch
 import gradio as gr
 
 from quran_muaalem.inference import Muaalem
@@ -60,7 +61,7 @@ REQUIRED_MOSHAF_FIELDS = [
 ]
 model_id = "obadx/muaalem-model-v3_2"
 logging.basicConfig(level=logging.INFO)
-device = "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 muaalem = Muaalem(model_name_or_path=model_id, device=device)
 sampling_rate = 16000
 
