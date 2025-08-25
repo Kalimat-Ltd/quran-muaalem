@@ -1678,12 +1678,14 @@ dependencies = [
 [package.optional-dependencies]
 test = [
     { name = "librosa" },
+    { name = "numba" },
     { name = "pytest" },
 ]
 ui = [
     { name = "gradio" },
     { name = "librosa" },
     { name = "moviepy" },
+    { name = "numba" },
 ]
 
 [package.metadata]
@@ -1693,6 +1695,8 @@ requires-dist = [
     { name = "librosa", marker = "extra == 'test'", specifier = ">=0.11.0" },
     { name = "librosa", marker = "extra == 'ui'", specifier = ">=0.11.0" },
     { name = "moviepy", marker = "extra == 'ui'", specifier = ">=2.2.1" },
+    { name = "numba", marker = "extra == 'test'", specifier = ">=0.61.2" },
+    { name = "numba", marker = "extra == 'ui'", specifier = ">=0.61.2" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "quran-transcript", specifier = ">=0.1.0" },
