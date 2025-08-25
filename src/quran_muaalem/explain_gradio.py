@@ -33,16 +33,6 @@ def explain_for_gradio(
         <h3>مقارنة صفات الحروف</h3>
         {sifat_html}
        <div class="color-legend">
-        <h3>دلالات الألوان</h3>
-            <div class="color-item">
-                <div class="color-box" style="background-color: #ff0000;"></div>
-                <div class="explanation">خطأ في الصفة أو الحرف</div>
-            </div>
-            <div class="color-item">
-                <div class="color-box" style="background-color: #ffff00;"></div>
-                <div class="explanation">الحرف زائد وغير موجود في الآية المقارن بها</div>
-            </div>
-        </div>
     </div>
     """
 
@@ -50,7 +40,7 @@ def explain_for_gradio(
 
 
 def explain_phonemes_html(dmp_obj, diffs):
-    html_output = '<div style="background-color: #000; padding: 10px; border-radius: 5px; margin-bottom: 20px;">'
+    html_output = '<div style="background-color: #000; padding: 10px; border-radius: 5px; margin-bottom: 20px; font-size: 30px;">'
 
     # Process each difference (same logic as terminal version)
     for op, data in diffs:
