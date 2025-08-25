@@ -29,6 +29,18 @@
 [arxiv-url]: https://arxiv.org/abs/<PAPER_ID>
 
 
+
+
+<div align="center" style="background-color: #f0f8ff; border-left: 5px solid #4CAF50; padding: 15px; margin: 20px 0; border-radius: 5px;">
+  <h3 style="color: #2c3e50; margin-top: 0;">📖 رابط لتجربة للمعلم القرآني</h3>
+  <p style="margin: 10px 0;">يرجى الضغط على للتجربة:</p>
+  <a href="رابط_العرض_التقديمي_هنا" style="display: inline-block; background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 10px 0;">الرابط</a>
+  <p style="background-color: #ffeb3b; padding: 8px; border-radius: 3px; display: inline-block; margin: 10px 0;">
+    ⚠️ <strong>تنبيه:</strong> هذا الرابط سينتهي في <span style="color: #d32f2f; font-weight: bold;">27 أغسطس 2025</span>
+  </p>
+</div>
+
+
 ## الممزيات
 
 * مدرب على الرسم الصوتي للقhttps://huggingface.co/docs/transformers/model_doc/wav2vec2-bertرآن الكريم: [quran-transcript](https://github.com/obadx/quran-transcript) القادر على كشف أخطاء الحروف والتجويد وصفات الحروف
