@@ -309,7 +309,7 @@ with gr.Blocks(title="Quran Recitation Analysis") as app:
                 )
 
             with gr.Column(scale=2):
-                gr.Markdown("### Audio Input & Analysis")
+                gr.Markdown("### فحص التلاوة القرآنية")
                 audio_input = gr.Audio(
                     sources=["upload", "microphone"],
                     label="Upload or Record Audio",
@@ -317,10 +317,10 @@ with gr.Blocks(title="Quran Recitation Analysis") as app:
                     elem_id="audio_input",
                 )
                 analyze_btn = gr.Button(
-                    "Analyze Recitation", variant="primary", elem_id="analyze_btn"
+                    "افحص التلاوة", variant="primary", elem_id="analyze_btn"
                 )
                 output_html = gr.HTML(
-                    label="Analysis Results",
+                    label="نتيجة الفحص",
                     elem_id="output_html",
                 )
 

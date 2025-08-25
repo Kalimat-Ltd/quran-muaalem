@@ -28,10 +28,15 @@ def explain_for_gradio(
     # Combine both sections
     html_output = f"""
     <div style="font-family: monospace; width: 100%;">
-        <h3>Phonemes Comparison</h3>
+        <h3>مقارنة الحروف</h3>
         {phoneme_html}
-        <h3>Sifat Comparison</h3>
+        <h3>مقارنة صفات الحروف</h3>
         {sifat_html}
+        <h3>دلالات الألوان</h3>
+        <div>
+        <span style="background-color: #ff0000; color: white; padding: 2px 5px;">خطأ في الصفة أو الحرف</span>
+        <span style="background-color: #ffff00; padding: 2px 5px;">الحرف زائد وغير موجود في الآية المقارن بها</span>
+        </div>
     </div>
     """
 
