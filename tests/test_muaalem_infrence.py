@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 from time import perf_counter
 
-import torch
 
 from quran_transcript import Aya, quran_phonetizer, MoshafAttributes
-from quran_muaalem.inference import Muaalem
-from quran_muaalem.muaalem_typing import MuaalemOutput
-from quran_muaalem.explain import explain_for_terminal
+import torch
 from torchcodec.decoders import AudioDecoder
+
+from quran_muaalem import Muaalem, MuaalemOutput, explain_for_terminal
 
 
 def load_cache(cache_dir: str | Path, file_path: str | Path, reload=False):

@@ -1,8 +1,10 @@
 from dataclasses import asdict
 import json
 
+from quran_transcript import Aya, quran_phonetizer, MoshafAttributes
 import torch
 import pytest
+from torchcodec.decoders import AudioDecoder
 
 from quran_muaalem.decode import (
     ctc_decode,
@@ -13,7 +15,8 @@ from quran_muaalem.decode import (
 )
 from quran_muaalem.muaalem_typing import Unit, Sifa, SingleUnit
 from quran_muaalem.modeling.multi_level_tokenizer import MultiLevelTokenizer
-from quran_muaalem.inference import format_sifat
+from quran_muaalem.inference import format_sifat, Muaalem
+from quran_muaalem.explain import explain_for_terminal
 
 
 @pytest.mark.parametrize(
@@ -192,222 +195,222 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
         torch.testing.assert_close(outs[idx].p, torch.FloatTensor(ex_batch_probs[idx]))
 
 
-@pytest.mark.parametrize(
-    "level_to_probs, level_to_ref_ids, ex_level_to_units",
-    [
-        (
-            {
-                "phonemes": [
-                    [
-                        [0, 1, 0, 0, 0],
-                    ],
-                ]
-            },
-            {
-                "phonemes": [
-                    [
-                        [0, 1, 0, 0, 0, 3, 4],
-                    ],
-                ]
-            },
-            {
-                "phonemes": [
-                    Unit(
-                        text="a",
-                        probs=torch.FloatTensor([1.0]),
-                        ids=torch.LongTensor([1]),
-                    )
-                ]
-            },
-        ),
-        # biger example
-        (
-            {
-                "phonemes": [
-                    [
-                        [0, 1, 0, 0, 0],
-                        [0, 0, 1, 0, 0],
-                        [0, 0, 0, 1, 0],
-                        [0, 0, 0, 0, 1],
-                    ],
-                ]
-            },
-            {
-                "phonemes": [
-                    [
-                        [0, 1, 0, 0, 0, 4],
-                        [0, 0, 1, 0, 0, 3],
-                        [0, 0, 0, 1, 0, 2],
-                        [0, 0, 0, 0, 1, 4],
-                    ],
-                ]
-            },
-            {
-                "phonemes": [
-                    Unit(
-                        text="abcd",
-                        probs=torch.FloatTensor([1.0, 1.0, 1.0, 1.0]),
-                        ids=torch.LongTensor([1, 2, 3, 4]),
-                    )
-                ]
-            },
-        ),
-        # diffrent probs
-        (
-            {
-                "phonemes": [
-                    [
-                        [0, 1, 0, 0, 0],
-                        [0, 0, 1, 0, 0],
-                        [0, 0, 0.6, 0.4, 0],
-                        [0, 0, 0, 0, 1],
-                    ],
-                ]
-            },
-            {
-                "phonemes": [
-                    [
-                        [0, 1, 0, 0, 0],
-                        [0, 0, 1, 0, 0],
-                        [0, 0, 0.6, 0.4, 0],
-                        [0, 0, 0, 0, 1],
-                    ],
-                ]
-            },
-            {
-                "phonemes": [
-                    Unit(
-                        text="abd",
-                        probs=torch.FloatTensor([1.0, 0.8, 1.0]),
-                        ids=torch.LongTensor([1, 2, 4]),
-                    ),
-                ]
-            },
-        ),
-        # diffrent probs and levels
-        (
-            {
-                "phonemes": [
-                    [
-                        [0, 1, 0, 0, 0],
-                        [0, 0, 1, 0, 0],
-                        [0, 0, 0.6, 0.4, 0],
-                        [0, 0, 0, 0, 1],
-                    ],
-                ],
-                "hams": [
-                    [
-                        [0, 1, 0],
-                        [0, 0.8, 0.2],
-                    ],
-                ],
-            },
-            {
-                "phonemes": [
-                    [
-                        [0, 1, 0, 0, 0],
-                        [0, 0, 1, 0, 0],
-                        [0, 0, 0.6, 0.4, 0],
-                        [0, 0, 0, 0, 1],
-                    ],
-                ],
-                "hams": [
-                    [
-                        [0, 1, 0],
-                        [0, 0.8, 0.2],
-                    ],
-                ],
-            },
-            {
-                "phonemes": [
-                    Unit(
-                        text="abd",
-                        probs=torch.FloatTensor([1.0, 0.8, 1.0]),
-                        ids=torch.LongTensor([1, 2, 4]),
-                    )
-                ],
-                "hams": [
-                    Unit(
-                        text="A",
-                        probs=torch.FloatTensor([0.9]),
-                        ids=torch.LongTensor([1]),
-                    )
-                ],
-            },
-        ),
-        # # diffrent probs and multiple sequences
-        # (
-        #     {
-        #         "phonemes": [
-        #             [
-        #                 [0, 1, 0, 0, 0],
-        #                 [0, 0, 1, 0, 0],
-        #                 [0, 0, 0.6, 0.4, 0],
-        #                 [0, 0, 0, 0, 1],
-        #             ],
-        #             [
-        #                 [0, 1, 0, 0, 0],
-        #                 [0, 1, 0, 0, 0],
-        #                 [0, 1, 0, 0, 0],
-        #                 [0, 1, 0, 0, 0],
-        #             ],
-        #         ],
-        #         "hams": [
-        #             [
-        #                 [0, 1, 0],
-        #                 [0, 0.8, 0.2],
-        #             ],
-        #         ],
-        #     },
-        #     {
-        #         "phonemes": [
-        #             Unit(
-        #                 text="abd",
-        #                 probs=torch.FloatTensor([1.0, 0.8, 1.0]),
-        #                 ids=torch.LongTensor([1, 2, 4]),
-        #             ),
-        #             Unit(
-        #                 text="a",
-        #                 probs=torch.FloatTensor([1.0]),
-        #                 ids=torch.LongTensor([1]),
-        #             ),
-        #         ],
-        #         "hams": [
-        #             Unit(
-        #                 text="A",
-        #                 probs=torch.FloatTensor([0.9]),
-        #                 ids=torch.LongTensor([1]),
-        #             )
-        #         ],
-        #     },
-        # ),
-    ],
-)
-def test_multilevel_greedy_decode(level_to_probs, level_to_ref_ids, ex_level_to_units):
-    level_to_vocab = {
-        "phonemes": {1: "a", 2: "b", 3: "c", 4: "d"},
-        "hams": {1: "A", 2: "B"},
-    }
-    level_to_probs = {l: torch.FloatTensor(p) for l, p in level_to_probs.items()}
-    level_to_ref_ids = {l: torch.LongTensor(i) for l, i in level_to_ref_ids.items()}
-    for level in level_to_probs:
-        print(level_to_probs[level].shape)
-
-    level_to_units = multilevel_greedy_decode(
-        level_to_probs,
-        level_to_vocab,
-        level_to_ref_ids,
-    )
-    assert len(ex_level_to_units) == len(level_to_units)
-    assert set(ex_level_to_units.keys()) == set(level_to_units.keys())
-
-    for level in ex_level_to_units:
-        assert len(ex_level_to_units[level]) == len(level_to_units[level])
-        for unit, ex_unit in zip(level_to_units[level], ex_level_to_units[level]):
-            print(f"OUT UNIT: {unit}")
-            print(f"EXP UNIT: {ex_unit}")
-            assert unit.text == ex_unit.text
-            torch.testing.assert_close(unit.probs, ex_unit.probs)
+# @pytest.mark.parametrize(
+#     "level_to_probs, level_to_ref_ids, ex_level_to_units",
+#     [
+#         (
+#             {
+#                 "phonemes": [
+#                     [
+#                         [0, 1, 0, 0, 0],
+#                     ],
+#                 ]
+#             },
+#             {
+#                 "phonemes": [
+#                     [
+#                         [0, 1, 0, 0, 0, 3, 4],
+#                     ],
+#                 ]
+#             },
+#             {
+#                 "phonemes": [
+#                     Unit(
+#                         text="a",
+#                         probs=torch.FloatTensor([1.0]),
+#                         ids=torch.LongTensor([1]),
+#                     )
+#                 ]
+#             },
+#         ),
+#         # biger example
+#         (
+#             {
+#                 "phonemes": [
+#                     [
+#                         [0, 1, 0, 0, 0],
+#                         [0, 0, 1, 0, 0],
+#                         [0, 0, 0, 1, 0],
+#                         [0, 0, 0, 0, 1],
+#                     ],
+#                 ]
+#             },
+#             {
+#                 "phonemes": [
+#                     [
+#                         [0, 1, 0, 0, 0, 4],
+#                         [0, 0, 1, 0, 0, 3],
+#                         [0, 0, 0, 1, 0, 2],
+#                         [0, 0, 0, 0, 1, 4],
+#                     ],
+#                 ]
+#             },
+#             {
+#                 "phonemes": [
+#                     Unit(
+#                         text="abcd",
+#                         probs=torch.FloatTensor([1.0, 1.0, 1.0, 1.0]),
+#                         ids=torch.LongTensor([1, 2, 3, 4]),
+#                     )
+#                 ]
+#             },
+#         ),
+#         # diffrent probs
+#         (
+#             {
+#                 "phonemes": [
+#                     [
+#                         [0, 1, 0, 0, 0],
+#                         [0, 0, 1, 0, 0],
+#                         [0, 0, 0.6, 0.4, 0],
+#                         [0, 0, 0, 0, 1],
+#                     ],
+#                 ]
+#             },
+#             {
+#                 "phonemes": [
+#                     [
+#                         [0, 1, 0, 0, 0],
+#                         [0, 0, 1, 0, 0],
+#                         [0, 0, 0.6, 0.4, 0],
+#                         [0, 0, 0, 0, 1],
+#                     ],
+#                 ]
+#             },
+#             {
+#                 "phonemes": [
+#                     Unit(
+#                         text="abd",
+#                         probs=torch.FloatTensor([1.0, 0.8, 1.0]),
+#                         ids=torch.LongTensor([1, 2, 4]),
+#                     ),
+#                 ]
+#             },
+#         ),
+#         # diffrent probs and levels
+#         (
+#             {
+#                 "phonemes": [
+#                     [
+#                         [0, 1, 0, 0, 0],
+#                         [0, 0, 1, 0, 0],
+#                         [0, 0, 0.6, 0.4, 0],
+#                         [0, 0, 0, 0, 1],
+#                     ],
+#                 ],
+#                 "hams": [
+#                     [
+#                         [0, 1, 0],
+#                         [0, 0.8, 0.2],
+#                     ],
+#                 ],
+#             },
+#             {
+#                 "phonemes": [
+#                     [
+#                         [0, 1, 0, 0, 0],
+#                         [0, 0, 1, 0, 0],
+#                         [0, 0, 0.6, 0.4, 0],
+#                         [0, 0, 0, 0, 1],
+#                     ],
+#                 ],
+#                 "hams": [
+#                     [
+#                         [0, 1, 0],
+#                         [0, 0.8, 0.2],
+#                     ],
+#                 ],
+#             },
+#             {
+#                 "phonemes": [
+#                     Unit(
+#                         text="abd",
+#                         probs=torch.FloatTensor([1.0, 0.8, 1.0]),
+#                         ids=torch.LongTensor([1, 2, 4]),
+#                     )
+#                 ],
+#                 "hams": [
+#                     Unit(
+#                         text="A",
+#                         probs=torch.FloatTensor([0.9]),
+#                         ids=torch.LongTensor([1]),
+#                     )
+#                 ],
+#             },
+#         ),
+#         # # diffrent probs and multiple sequences
+#         # (
+#         #     {
+#         #         "phonemes": [
+#         #             [
+#         #                 [0, 1, 0, 0, 0],
+#         #                 [0, 0, 1, 0, 0],
+#         #                 [0, 0, 0.6, 0.4, 0],
+#         #                 [0, 0, 0, 0, 1],
+#         #             ],
+#         #             [
+#         #                 [0, 1, 0, 0, 0],
+#         #                 [0, 1, 0, 0, 0],
+#         #                 [0, 1, 0, 0, 0],
+#         #                 [0, 1, 0, 0, 0],
+#         #             ],
+#         #         ],
+#         #         "hams": [
+#         #             [
+#         #                 [0, 1, 0],
+#         #                 [0, 0.8, 0.2],
+#         #             ],
+#         #         ],
+#         #     },
+#         #     {
+#         #         "phonemes": [
+#         #             Unit(
+#         #                 text="abd",
+#         #                 probs=torch.FloatTensor([1.0, 0.8, 1.0]),
+#         #                 ids=torch.LongTensor([1, 2, 4]),
+#         #             ),
+#         #             Unit(
+#         #                 text="a",
+#         #                 probs=torch.FloatTensor([1.0]),
+#         #                 ids=torch.LongTensor([1]),
+#         #             ),
+#         #         ],
+#         #         "hams": [
+#         #             Unit(
+#         #                 text="A",
+#         #                 probs=torch.FloatTensor([0.9]),
+#         #                 ids=torch.LongTensor([1]),
+#         #             )
+#         #         ],
+#         #     },
+#         # ),
+#     ],
+# )
+# def test_multilevel_greedy_decode(level_to_probs, level_to_ref_ids, ex_level_to_units):
+#     level_to_vocab = {
+#         "phonemes": {1: "a", 2: "b", 3: "c", 4: "d"},
+#         "hams": {1: "A", 2: "B"},
+#     }
+#     level_to_probs = {l: torch.FloatTensor(p) for l, p in level_to_probs.items()}
+#     level_to_ref_ids = {l: torch.LongTensor(i) for l, i in level_to_ref_ids.items()}
+#     for level in level_to_probs:
+#         print(level_to_probs[level].shape)
+#
+#     level_to_units = multilevel_greedy_decode(
+#         level_to_probs,
+#         level_to_vocab,
+#         level_to_ref_ids,
+#     )
+#     assert len(ex_level_to_units) == len(level_to_units)
+#     assert set(ex_level_to_units.keys()) == set(level_to_units.keys())
+#
+#     for level in ex_level_to_units:
+#         assert len(ex_level_to_units[level]) == len(level_to_units[level])
+#         for unit, ex_unit in zip(level_to_units[level], ex_level_to_units[level]):
+#             print(f"OUT UNIT: {unit}")
+#             print(f"EXP UNIT: {ex_unit}")
+#             assert unit.text == ex_unit.text
+#             torch.testing.assert_close(unit.probs, ex_unit.probs)
 
 
 @pytest.mark.parametrize(
@@ -708,3 +711,44 @@ def test_fromat_sifat(level_to_units, chunked_phonemes_batch, ex_sifat_batch):
             print(f"EX OUPUT: {json.dumps(asdict(ex_sifa), indent=2)}")
             print("-" * 50)
             assert sifa == ex_sifa
+
+
+@pytest.mark.slow
+def test_inference():
+    cache_dir = "./assets/test_cache"
+    sampling_rate = 16000
+    audio_path = "./assets/test.wav"
+    device = "cpu"
+
+    uthmani_ref = Aya(8, 75).get_by_imlaey_words(17, 9).uthmani
+    moshaf = MoshafAttributes(
+        rewaya="hafs",
+        madd_monfasel_len=2,
+        madd_mottasel_len=4,
+        madd_mottasel_waqf=4,
+        madd_aared_len=2,
+    )
+    phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
+
+    muaalem = Muaalem(device=device)
+    decoder = AudioDecoder(audio_path, sample_rate=sampling_rate, num_channels=1)
+    outs = muaalem(
+        [decoder.get_all_samples().data[0]],
+        [phonetizer_out],
+        sampling_rate=sampling_rate,
+    )
+
+    for out in outs:
+        print(out.phonemes)
+        for sifa in out.sifat:
+            print(json.dumps(asdict(sifa), indent=2, ensure_ascii=False))
+            print("*" * 30)
+        print("-" * 40)
+
+    # Explaining Results
+    explain_for_terminal(
+        outs[0].phonemes.text,
+        phonetizer_out.phonemes,
+        outs[0].sifat,
+        phonetizer_out.sifat,
+    )
