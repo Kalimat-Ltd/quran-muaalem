@@ -9,7 +9,7 @@ from quran_transcript.phonetics.moshaf_attributes import (
     get_arabic_attributes,
     get_arabic_name,
 )
-from torchcodec.decoders import AudioDecoder
+from librosa.core import load
 from pydantic.fields import FieldInfo, PydanticUndefined
 import torch
 import gradio as gr
@@ -192,9 +192,9 @@ def process_audio(audio, sura_idx, aya_idx, start_idx, num_words):
         )
 
         # Process audio
-        decoder = AudioDecoder(audio, sample_rate=sampling_rate, num_channels=1)
+        wave, _ = load(audio, sr=sampling_rate, mono=True)
         outs = muaalem(
-            [decoder.get_all_samples().data[0]],
+            [wave],
             [phonetizer_out],
             sampling_rate=sampling_rate,
         )

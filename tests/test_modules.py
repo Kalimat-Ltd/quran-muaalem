@@ -4,7 +4,7 @@ import json
 from quran_transcript import Aya, quran_phonetizer, MoshafAttributes
 import torch
 import pytest
-from torchcodec.decoders import AudioDecoder
+from librosa.core import load
 
 from quran_muaalem.decode import (
     ctc_decode,
@@ -731,9 +731,9 @@ def test_inference():
     phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
 
     muaalem = Muaalem(device=device)
-    decoder = AudioDecoder(audio_path, sample_rate=sampling_rate, num_channels=1)
+    wave, _ = load(audio_path, sr=sampling_rate, mono=True)
     outs = muaalem(
-        [decoder.get_all_samples().data[0]],
+        [wave],
         [phonetizer_out],
         sampling_rate=sampling_rate,
     )

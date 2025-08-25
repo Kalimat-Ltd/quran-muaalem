@@ -36,13 +36,13 @@ classifiers = [
 [project.optional-dependencies]
 
 test = [
+  "librosa>=0.11.0",
   "pytest",
-  "torchcodec>=0.6.0",
 ]
 ui = [
     "gradio>=5.43.1",
+    "librosa>=0.11.0",
     "moviepy>=2.2.1",
-    "torchcodec>=0.6.0",
 ]
 
 

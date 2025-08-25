@@ -7,7 +7,7 @@ from time import perf_counter
 
 from quran_transcript import Aya, quran_phonetizer, MoshafAttributes
 import torch
-from torchcodec.decoders import AudioDecoder
+from librosa.core import load
 
 from quran_muaalem import Muaalem, MuaalemOutput, explain_for_terminal
 
@@ -55,9 +55,9 @@ if __name__ == "__main__":
     cache = load_cache(cache_dir, audio_path, reload=reload)
     if not cache:
         muaalem = Muaalem(device=device)
-        decoder = AudioDecoder(audio_path, sample_rate=sampling_rate, num_channels=1)
+        wave, _ = load(audio_path, sr=sampling_rate, mono=True)
         outs = muaalem(
-            [decoder.get_all_samples().data[0]],
+            [wave],
             [phonetizer_out],
             sampling_rate=sampling_rate,
         )

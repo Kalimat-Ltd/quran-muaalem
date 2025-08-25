@@ -109,7 +109,7 @@ First, install the required dependencies:
 
 ```bash
 # Install system dependencies
-sudo apt-get install ffmpeg
+sudo apt-get install -y ffmpeg libsndfile1 portaudio19-dev
 
 # Install Python packages
 pip install quran-muaalem torchcodec
