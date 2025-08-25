@@ -1,7 +1,7 @@
 # Quran Muaalem
 
 <div align="center">
-<strong>بعون الله وتوفيقه لا شريك له نقدم العلم القرآني الذكي القادر على كشف أخطاء التلاوة والتجويد وصفات الحروف بدقة عالية</strong>
+<strong>بعون الله وتوفيقه لا شريك له نقدم المعلم القرآني الذكي القادر على كشف أخطاء التلاوة والتجويد وصفات الحروف</strong>
 
 [![PyPI][pypi-badge]][pypi-url]
 [![Python Versions][python-badge]][python-url]
@@ -10,6 +10,7 @@
 [![Google Colab][colab-badge]][colab-url]
 [![arXiv][arxiv-badge]][arxiv-url]
 [![MIT License][mit-badge]][mit-url]
+[![Discord][discord-badge]][discord-url]
 
 </div>
 
@@ -27,9 +28,8 @@
 [hf-dataset-url]: https://huggingface.co/datasets/obadx/muaalem-annotated-v3
 [arxiv-badge]: https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg
 [arxiv-url]: https://arxiv.org/abs/<PAPER_ID>
-
-
-
+[discord-badge]: https://img.shields.io/badge/Discord-Join%20Community-7289da?logo=discord&logoColor=white
+[discord-url]: https://discord.gg/hJWW6fCH
 
 <div align="center" style="background-color: #f0f8ff; border-left: 5px solid #4CAF50; padding: 15px; margin: 20px 0; border-radius: 5px;">
   <h3 style="color: #2c3e50; margin-top: 0;">📖 رابط لتجربة المعلم القرآني</h3>
