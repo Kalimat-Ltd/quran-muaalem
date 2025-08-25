@@ -266,7 +266,7 @@ with gr.Blocks(title="المعلم القرآني") as app:
 
     with gr.Tab("التحليل الرئيسي - Main Analysis"):
         gr.Markdown("# كشف أخطاء التلاوة والتجويد وصفات الحروف")
-        gr.Markdown("اختر الرسم المقطع القرآني المراد تعلمه")
+        gr.Markdown("اختر المقطع القرآني المراد تعلمه")
 
         with gr.Row():
             with gr.Column(scale=1):
