@@ -32,7 +32,7 @@
 
 
 <div align="center" style="background-color: #f0f8ff; border-left: 5px solid #4CAF50; padding: 15px; margin: 20px 0; border-radius: 5px;">
-  <h3 style="color: #2c3e50; margin-top: 0;">📖 رابط لتجربة للمعلم القرآني</h3>
+  <h3 style="color: #2c3e50; margin-top: 0;">📖 رابط لتجربة المعلم القرآني</h3>
   <p style="margin: 10px 0;">يرجى الضغط على للتجربة:</p>
   <a href="رابط_العرض_التقديمي_هنا" style="display: inline-block; background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 10px 0;">الرابط</a>
   <p style="background-color: #ffeb3b; padding: 8px; border-radius: 3px; display: inline-block; margin: 10px 0;">
@@ -43,7 +43,7 @@
 
 ## الممزيات
 
-* مدرب على الرسم الصوتي للقhttps://huggingface.co/docs/transformers/model_doc/wav2vec2-bertرآن الكريم: [quran-transcript](https://github.com/obadx/quran-transcript) القادر على كشف أخطاء الحروف والتجويد وصفات الحروف
+* مدرب على الرسم الصوتي للقرآن الكريم: [quran-transcript](https://github.com/obadx/quran-transcript) القادر على كشف أخطاء الحروف والتجويد وصفات الحروف
 * نموذج معقول الحجم 660 MP 
 * يحتاج فقط إله 1.5 GB من ذاكرة معالج الرسوميات
 * معمارية مبتكرة: CTC متعدد المستويات
@@ -213,44 +213,43 @@ Output:
 
 ```bash
 ءِننننَللَااهَبِكُللِشَيءِنعَلِۦۦمُ۾۾۾بَرَااااءَتُممممِنَللَااهِوَرَسُۥۥلِه
-┏━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
-┃          ┃             ┃              ┃              ┃          ┃              ┃           ┃ Shidda Or    ┃ Tafkheem Or  ┃              ┃              ┃
-┃ Phonemes ┃ Tikraar     ┃ Istitala     ┃ Tafashie     ┃ Itbaq    ┃ Hams Or Jahr ┃ Safeer    ┃ Rakhawa      ┃ Taqeeq       ┃ Qalqla       ┃ Ghonna       ┃
-┡━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
-│ ءِ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ shadeed      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ ننننَ     │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ maghnoon     │
-│ للَ       │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ mofakham     │ not_moqalqal │ not_maghnoon │
-│ اا       │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ rikhw        │ mofakham     │ not_moqalqal │ not_maghnoon │
-│ هَ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ hams         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ بِ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ shadeed      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ كُ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ hams         │ no_safeer │ shadeed      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ للِ       │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ شَ        │ not_mokarar │ not_mostate… │ motafashie   │ monfateh │ hams         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ ي        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ ءِ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ shadeed      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ ن        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ maghnoon     │
-│ عَ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ لِ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ ۦۦ       │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ مُ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ maghnoon     │
-│ ۾۾۾      │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ maghnoon     │
-│ بَ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ shadeed      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ رَ        │ mokarar     │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ mofakham     │ not_moqalqal │ not_maghnoon │
-│ اااا     │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ rikhw        │ mofakham     │ not_moqalqal │ not_maghnoon │
-│ ءَ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ shadeed      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ تُ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ hams         │ no_safeer │ shadeed      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ ممممِ     │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ maghnoon     │
-│ نَ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ maghnoon     │
-│ للَ       │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ mofakham     │ not_moqalqal │ not_maghnoon │
-│ اا       │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ rikhw        │ mofakham     │ not_moqalqal │ not_maghnoon │
-│ هِ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ hams         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ وَ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ رَ        │ mokarar     │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ mofakham     │ not_moqalqal │ not_maghnoon │
-│ سُ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ hams         │ safeer    │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ ۥۥ       │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ لِ        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ jahr         │ no_safeer │ between      │ moraqaq      │ not_moqalqal │ not_maghnoon │
-│ ه        │ not_mokarar │ not_mostate… │ not_motafas… │ monfateh │ hams         │ no_safeer │ rikhw        │ moraqaq      │ not_moqalqal │ not_maghnoon │
-└──────────┴─────────────┴──────────────┴──────────────┴──────────┴──────────────┴───────────┴──────────────┴──────────────┴──────────────┴──────────────┘
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Phonemes ┃ Tafashie       ┃ Qalqla       ┃ Ghonna       ┃ Hams Or Jahr ┃ Safeer    ┃ Tikraar     ┃ Tafkheem Or Taqeeq ┃ Istitala      ┃ Shidda Or Rakhawa ┃ Itbaq    ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ ءِ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ shadeed           │ monfateh │
+│ ننننَ     │ not_motafashie │ not_moqalqal │ maghnoon     │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ للَ       │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ mofakham           │ not_mostateel │ between           │ monfateh │
+│ اا       │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ mofakham           │ not_mostateel │ rikhw             │ monfateh │
+│ هَ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ hams         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ بِ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ shadeed           │ monfateh │
+│ كُ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ hams         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ shadeed           │ monfateh │
+│ للِ       │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ شَ        │ motafashie     │ not_moqalqal │ not_maghnoon │ hams         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ ي        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ ءِ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ shadeed           │ monfateh │
+│ ن        │ not_motafashie │ not_moqalqal │ maghnoon     │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ عَ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ لِ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ ۦۦ       │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ مُ        │ not_motafashie │ not_moqalqal │ maghnoon     │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ ۾۾۾      │ not_motafashie │ not_moqalqal │ maghnoon     │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ بَ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ shadeed           │ monfateh │
+│ رَ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ mokarar     │ mofakham           │ not_mostateel │ between           │ monfateh │
+│ اااا     │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ mofakham           │ not_mostateel │ rikhw             │ monfateh │
+│ ءَ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ shadeed           │ monfateh │
+│ تُ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ hams         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ shadeed           │ monfateh │
+│ ممممِ     │ not_motafashie │ not_moqalqal │ maghnoon     │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ نَ        │ not_motafashie │ not_moqalqal │ maghnoon     │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ للَ       │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ mofakham           │ not_mostateel │ between           │ monfateh │
+│ اا       │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ mofakham           │ not_mostateel │ rikhw             │ monfateh │
+│ هِ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ hams         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ وَ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ رَ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ mokarar     │ mofakham           │ not_mostateel │ between           │ monfateh │
+│ سُ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ hams         │ safeer    │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ ۥۥ       │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+│ لِ        │ not_motafashie │ not_moqalqal │ not_maghnoon │ jahr         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ between           │ monfateh │
+│ ه        │ not_motafashie │ not_moqalqal │ not_maghnoon │ hams         │ no_safeer │ not_mokarar │ moraqaq            │ not_mostateel │ rikhw             │ monfateh │
+└──────────┴────────────────┴──────────────┴──────────────┴──────────────┴───────────┴─────────────┴────────────────────┴───────────────┴───────────────────┴──────────┘
 ```
 
 ### API Docs
