@@ -257,7 +257,7 @@ def reset_settings():
 
 
 # Create the Gradio app
-with gr.Blocks(title="Quran Recitation Analysis") as app:
+with gr.Blocks(title="المعلم القرآني") as app:
     # Store current moshaf settings in session state
     current_moshaf_state = gr.State(default_moshaf)
 
@@ -265,45 +265,46 @@ with gr.Blocks(title="Quran Recitation Analysis") as app:
     field_names = []
 
     with gr.Tab("التحليل الرئيسي - Main Analysis"):
-        gr.Markdown("# Quran Recitation Analysis Tool")
-        gr.Markdown(
-            "Select the Sura, Aya, and word range, then upload an audio recording of the recitation for analysis."
-        )
+        gr.Markdown("# كشف أخطاء التاوة والتجويد")
+        gr.Markdown("اختر السورة والآيمة وبداية الكلمة وعدد الكلمات مقارنة الفحص")
 
         with gr.Row():
             with gr.Column(scale=1):
-                gr.Markdown("### Quran Reference")
+                gr.Markdown("### التلاة المقارنة")
 
                 # Create sura dropdown with both index and name
                 sura_choices = [
                     (f"{idx} - {sura_idx_to_name[idx]}", idx) for idx in range(1, 115)
                 ]
                 sura_dropdown = gr.Dropdown(
-                    choices=sura_choices, label="Sura", value=1, elem_id="sura_dropdown"
+                    choices=sura_choices,
+                    label="السورة",
+                    value=1,
+                    elem_id="sura_dropdown",
                 )
 
                 aya_dropdown = gr.Dropdown(
                     choices=list(range(1, sura_to_aya_count[1] + 1)),
-                    label="Aya Number",
+                    label="رقم الآية",
                     value=1,
                     elem_id="aya_dropdown",
                 )
                 start_idx = gr.Number(
                     value=0,
-                    label="Start Word Index",
+                    label="رقمة الكلمة بداية من صفر (Word Index)",
                     minimum=0,
                     step=1,
                     elem_id="start_idx",
                 )
                 num_words = gr.Number(
                     value=4,
-                    label="Number of Words",
+                    label="عدد الكلمات",
                     minimum=1,
                     step=1,
                     elem_id="num_words",
                 )
                 uthmani_text = gr.Textbox(
-                    label="Uthmani Reference Text",
+                    label="الرسم العثماني",
                     interactive=False,
                     elem_id="uthmani_text",
                 )

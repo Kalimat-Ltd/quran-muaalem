@@ -32,10 +32,16 @@ def explain_for_gradio(
         {phoneme_html}
         <h3>مقارنة صفات الحروف</h3>
         {sifat_html}
+       <div class="color-legend">
         <h3>دلالات الألوان</h3>
-        <div>
-        <span style="background-color: #ff0000; color: white; padding: 2px 5px;">خطأ في الصفة أو الحرف</span>
-        <span style="background-color: #ffff00; padding: 2px 5px;">الحرف زائد وغير موجود في الآية المقارن بها</span>
+            <div class="color-item">
+                <div class="color-box" style="background-color: #ff0000;"></div>
+                <div class="explanation">خطأ في الصفة أو الحرف</div>
+            </div>
+            <div class="color-item">
+                <div class="color-box" style="background-color: #ffff00;"></div>
+                <div class="explanation">الحرف زائد وغير موجود في الآية المقارن بها</div>
+            </div>
         </div>
     </div>
     """
