@@ -27,7 +27,7 @@
 [hf-dataset-badge]: https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Dataset-orange
 [hf-dataset-url]: https://huggingface.co/datasets/obadx/muaalem-annotated-v3
 [arxiv-badge]: https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg
-[arxiv-url]: https://arxiv.org/abs/<PAPER_ID>
+[arxiv-url]: https://arxiv.org/abs/2509.00094
 [discord-badge]: https://img.shields.io/badge/Discord-Join%20Community-7289da?logo=discord&logoColor=white
 [discord-url]: https://discord.gg/hJWW6fCH
 
