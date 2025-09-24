@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 from collections import deque
 from dataclasses import asdict, is_dataclass
@@ -20,40 +19,32 @@ from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
 # 2) Client sends a JSON "config" message first, e.g.:
 #    {
 #      "type": "config",
-#      "surah": 8,
-#      "ayah": 75,
-#      "start_word": 17,
-#      "end_word": 25,             // optional; alternatively provide num_words
-#      "num_words": null,          // optional, used if end_word is not provided
-#      "rewaya": "hafs",         // optional, defaults to 'hafs'
-#      "madd_monfasel_len": 2,    // optional
-#      "madd_mottasel_len": 4,    // optional
-#      "madd_mottasel_waqf": 4,   // optional
-#      "madd_aared_len": 2,       // optional
-#      "sampling_rate": 16000,     // optional, defaults to 16000
-#      "audio_format": "pcm16le"  // optional: "pcm16le" (default) or "float32"
+#      "surah": <int>,
+#      "ayah": <int>,
+#      "start_word": <int>,
+#      "end_word" | "num_words": <int>,
+#      "rewaya": "hafs",
+#      ...madd settings...,
+#      "sampling_rate": 16000
 #    }
-# 3) Client then streams audio chunks either as:
-#    - Binary frames (recommended): raw PCM mono at 16kHz (per audio_format)
-#    - Text JSON frames: {"type":"audio", "chunk_base64": "..."}
+# 3) Client then streams audio as binary frames only: PCM16LE mono at 16kHz.
 #    The server accumulates samples until a 2-second chunk (32000 samples) is reached.
 # 4) After each new 2s chunk, a rolling window of up to 5 chunks (10s) is built and
 #    inference is run. The server replies with a JSON message:
 #    {
 #       "type":"inference",
-#       "final": <bool>,  // false for intermediate, true for final (see step 5)
+#       "final": <bool>,
 #       "window_chunks": <int>,
 #       "total_samples": <int>,
-#       "phonetizer_out": { ... serialized PhonetizerOutput ... }
-#       "result": { ... serialized MuaalemOutput ... }
+#       "phonetizer_out": { ... },
+#       "result": { ... }
 #    }
-# 5) Optional control messages:
-#    - {"type":"end"} to end streaming and close.
-#    - {"type":"reset"} to clear buffers (keeps the same config).
+# 5) Control messages: {"type":"end"}, {"type":"reset"}, {"type":"ping"}
 
 CHUNK_SECS = 2
 DEFAULT_SR = 16000
 MAX_CHUNKS = 5
+AUDIO_FORMAT = "pcm16le"  # fixed wire format for binary frames
 
 
 def _to_serializable(obj: Any) -> Any:
@@ -185,7 +176,6 @@ class SessionState:
     def __init__(self, muaalem: Muaalem):
         self.muaalem = muaalem
         self.sr = DEFAULT_SR
-        self.audio_format = "pcm16le"  # or float32
         self.aya_ref_text: Optional[str] = None
         self.phonetizer_out = None
         self.buffer = RollingBuffer(self.sr)
@@ -196,7 +186,6 @@ class SessionState:
         if requested_sr != DEFAULT_SR:
             raise ValueError(f"sampling_rate must be {DEFAULT_SR}")
         self.sr = DEFAULT_SR
-        self.audio_format = cfg.get("audio_format", "pcm16le")
         self.buffer = RollingBuffer(self.sr)
 
         surah = int(cfg["surah"])  # required
@@ -234,21 +223,9 @@ class SessionState:
         self.phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
 
     def decode_binary_audio(self, data: bytes) -> np.ndarray:
-        # Expect mono PCM. For pcm16le: int16 little-endian, for float32: IEEE 754 little-endian
-        if self.audio_format == "float32":
-            arr = np.frombuffer(data, dtype='<f4')  # little-endian float32
-            return arr.astype(np.float32)
-        # default pcm16
+        # Expect mono PCM16LE: int16 little-endian -> float32 [-1,1]
         arr = np.frombuffer(data, dtype='<i2')
         return (arr.astype(np.float32) / 32768.0)
-
-    def decode_json_audio(self, payload: Dict[str, Any]) -> np.ndarray:
-        b64 = payload.get("chunk_base64")
-        if not b64:
-            return np.array([], dtype=np.float32)
-        raw = base64.b64decode(b64)
-        return self.decode_binary_audio(raw)
-
 
 def _select_device() -> str:
     """Device priority: cuda > mps (Apple Silicon) > cpu."""
@@ -323,7 +300,7 @@ async def ws_endpoint(ws: WebSocket):
             await ws.close(code=1002)
             return
         session.configure(cfg)
-        await ws.send_text(json.dumps({"type": "ready", "sampling_rate": session.sr, "audio_format": session.audio_format}))
+        await ws.send_text(json.dumps({"type": "ready", "sampling_rate": session.sr, "audio_format": AUDIO_FORMAT}))
 
         while True:
             msg = await ws.receive()
@@ -339,10 +316,7 @@ async def ws_endpoint(ws: WebSocket):
                     continue
 
                 mtype = payload.get("type")
-                if mtype == "audio":
-                    samples = session.decode_json_audio(payload)
-                    new_chunks = session.buffer.push_samples(samples)
-                elif mtype == "reset":
+                if mtype == "reset":
                     session.buffer.reset()
                     await ws.send_text(json.dumps({"type": "reset_ack"}))
                     continue

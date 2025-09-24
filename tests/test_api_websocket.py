@@ -163,7 +163,6 @@ async def test_ws_inference_end_to_end():
             "madd_mottasel_waqf": MADD_MOTTASEL_WAQF,
             "madd_aared_len": MADD_AARED,
             "sampling_rate": SR,
-            "audio_format": "pcm16le",
         }
         await ws.send(json.dumps(cfg))
 
@@ -174,7 +173,6 @@ async def test_ws_inference_end_to_end():
         ready = json.loads(ready_msg)
         assert ready.get("type") == "ready"
         assert ready.get("sampling_rate") == SR
-        assert ready.get("audio_format") in ("pcm16le", "float32")
 
         # 2) Ping/Pong
         await ws.send(json.dumps({"type": "ping"}))
