@@ -250,14 +250,57 @@ class SessionState:
         return self.decode_binary_audio(raw)
 
 
+def _select_device() -> str:
+    """Device priority: cuda > mps (Apple Silicon) > cpu."""
+    try:
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    try:
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def _supports_bf16(device: str) -> bool:
+    """Return True if bfloat16 is usable on the given device."""
+    try:
+        if device == "cuda":
+            fn = getattr(torch.cuda, "is_bf16_supported", None)
+            return bool(fn() if callable(fn) else False)
+        if device == "mps":
+            # bfloat16 not broadly supported on MPS; prefer float32
+            return False
+        if device == "cpu":
+            # Torch supports bf16 tensors on CPU in many builds; try a tiny op
+            try:
+                x = torch.ones(1, dtype=torch.bfloat16)
+                _ = x + x
+                return True
+            except Exception:
+                return False
+    except Exception:
+        return False
+    return False
+
+
+def _select_dtype(device: str):
+    """Dtype priority: bf16 (if supported) else float32."""
+    return torch.bfloat16 if _supports_bf16(device) else torch.float32
+
+
 app = FastAPI(title="Quran Muaalem WebSocket API")
 
 
 @app.on_event("startup")
 async def _startup() -> None:
-    # Load the model once
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    app.state.muaalem = Muaalem(device=device)
+    # Load the model once with preferred device/dtype
+    device = _select_device()
+    dtype = _select_dtype(device)
+    app.state.muaalem = Muaalem(device=device, dtype=dtype)
 
 
 @app.get("/health")
