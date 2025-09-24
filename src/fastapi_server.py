@@ -41,8 +41,10 @@ from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
 #    inference is run. The server replies with a JSON message:
 #    {
 #       "type":"inference",
+#       "final": <bool>,  // false for intermediate, true for final (see step 5)
 #       "window_chunks": <int>,
 #       "total_samples": <int>,
+#       "phonetizer_out": { ... serialized PhonetizerOutput ... }
 #       "result": { ... serialized MuaalemOutput ... }
 #    }
 # 5) Optional control messages:
