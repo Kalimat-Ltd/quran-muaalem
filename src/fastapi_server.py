@@ -1,0 +1,323 @@
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+from collections import deque
+from dataclasses import asdict, is_dataclass
+from typing import Any, Deque, Dict, List, Optional
+
+import numpy as np
+import torch
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
+
+from quran_muaalem import Muaalem, MuaalemOutput
+from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
+
+# WebSocket protocol
+# 1) Client connects to ws://<host>:<port>/ws
+# 2) Client sends a JSON "config" message first, e.g.:
+#    {
+#      "type": "config",
+#      "surah": 8,
+#      "ayah": 75,
+#      "start_word": 17,
+#      "end_word": 25,             // optional; alternatively provide num_words
+#      "num_words": null,          // optional, used if end_word is not provided
+#      "rewaya": "hafs",         // optional, defaults to 'hafs'
+#      "madd_monfasel_len": 2,    // optional
+#      "madd_mottasel_len": 4,    // optional
+#      "madd_mottasel_waqf": 4,   // optional
+#      "madd_aared_len": 2,       // optional
+#      "sampling_rate": 16000,     // optional, defaults to 16000
+#      "audio_format": "pcm16le"  // optional: "pcm16le" (default) or "float32"
+#    }
+# 3) Client then streams audio chunks either as:
+#    - Binary frames (recommended): raw PCM mono at 16kHz (per audio_format)
+#    - Text JSON frames: {"type":"audio", "chunk_base64": "..."}
+#    The server accumulates samples until a 2-second chunk (32000 samples) is reached.
+# 4) After each new 2s chunk, a rolling window of up to 5 chunks (10s) is built and
+#    inference is run. The server replies with a JSON message:
+#    {
+#       "type":"inference",
+#       "window_chunks": <int>,
+#       "total_samples": <int>,
+#       "result": { ... serialized MuaalemOutput ... }
+#    }
+# 5) Optional control messages:
+#    - {"type":"end"} to end streaming and close.
+#    - {"type":"reset"} to clear buffers (keeps the same config).
+
+CHUNK_SECS = 2
+DEFAULT_SR = 16000
+MAX_CHUNKS = 5
+
+
+def _to_serializable(obj: Any) -> Any:
+    """Convert dataclasses and tensors/ndarrays into JSON-serializable structures."""
+    try:
+        import torch  # optional, only used if available for type checks
+    except Exception:
+        torch = None
+
+    if is_dataclass(obj):
+        return {k: _to_serializable(v) for k, v in asdict(obj).items()}
+    if torch is not None and isinstance(obj, torch.Tensor):
+        return obj.detach().cpu().tolist()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (list, tuple)):
+        return [_to_serializable(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _to_serializable(v) for k, v in obj.items()}
+    return obj
+
+
+class RollingBuffer:
+    def __init__(self, sampling_rate: int, chunk_secs: int = CHUNK_SECS, max_chunks: int = MAX_CHUNKS):
+        self.sr = sampling_rate
+        self.chunk_size = sampling_rate * chunk_secs
+        self.max_chunks = max_chunks
+        self._chunks: Deque[np.ndarray] = deque(maxlen=max_chunks)
+        self._staging: List[float] = []  # accumulate until reaching chunk_size
+
+    def reset(self) -> None:
+        self._chunks.clear()
+        self._staging.clear()
+
+    def push_samples(self, samples: np.ndarray) -> List[np.ndarray]:
+        """Push new samples (float32 mono in [-1,1]).
+        Returns a list of newly formed 2s chunks (0..N) created from staging.
+        """
+        if samples.ndim > 1:
+            samples = samples.squeeze()
+        self._staging.extend(samples.astype(np.float32).tolist())
+        new_chunks: List[np.ndarray] = []
+        while len(self._staging) >= self.chunk_size:
+            chunk = np.array(self._staging[: self.chunk_size], dtype=np.float32)
+            del self._staging[: self.chunk_size]
+            self._chunks.append(chunk)
+            new_chunks.append(chunk)
+        return new_chunks
+
+    def current_window(self) -> Optional[np.ndarray]:
+        if not self._chunks:
+            return None
+        return np.concatenate(list(self._chunks), axis=0)
+
+    def window_chunk_count(self) -> int:
+        return len(self._chunks)
+
+    def total_samples(self) -> int:
+        return sum(len(c) for c in self._chunks)
+
+
+class SessionState:
+    def __init__(self, muaalem: Muaalem):
+        self.muaalem = muaalem
+        self.sr = DEFAULT_SR
+        self.audio_format = "pcm16le"  # or float32
+        self.aya_ref_text: Optional[str] = None
+        self.phonetizer_out = None
+        self.buffer = RollingBuffer(self.sr)
+        self.lock = asyncio.Lock()
+
+    def configure(self, cfg: Dict[str, Any]) -> None:
+        requested_sr = int(cfg.get("sampling_rate", DEFAULT_SR))
+        if requested_sr != DEFAULT_SR:
+            raise ValueError(f"sampling_rate must be {DEFAULT_SR}")
+        self.sr = DEFAULT_SR
+        self.audio_format = cfg.get("audio_format", "pcm16le")
+        self.buffer = RollingBuffer(self.sr)
+
+        surah = int(cfg["surah"])  # required
+        ayah = int(cfg["ayah"])    # required
+        start_word = int(cfg.get("start_word", 1))
+        end_word = cfg.get("end_word")
+        num_words = cfg.get("num_words")
+
+        # Build mushaf attributes (defaults align with test example)
+        moshaf = MoshafAttributes(
+            rewaya=cfg.get("rewaya", "hafs"),
+            madd_monfasel_len=int(cfg.get("madd_monfasel_len", 2)),
+            madd_mottasel_len=int(cfg.get("madd_mottasel_len", 4)),
+            madd_mottasel_waqf=int(cfg.get("madd_mottasel_waqf", 4)),
+            madd_aared_len=int(cfg.get("madd_aared_len", 2)),
+        )
+
+        aya_obj = Aya(surah, ayah)
+        # Robust: support either an (start, end) API or (start, num_words)
+        try:
+            if end_word is not None:
+                count = int(end_word) - int(start_word) + 1
+                if count < 1:
+                    count = 1
+                uthmani_ref = aya_obj.get_by_imlaey_words(int(start_word), int(count)).uthmani
+            elif num_words is not None:
+                uthmani_ref = aya_obj.get_by_imlaey_words(int(start_word), int(num_words)).uthmani
+            else:
+                uthmani_ref = aya_obj.get_by_imlaey_words(int(start_word), 1).uthmani
+        except Exception:
+            # Fallback to whole ayah if slicing fails
+            uthmani_ref = aya_obj.uthmani
+
+        self.aya_ref_text = uthmani_ref
+        self.phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
+
+    def decode_binary_audio(self, data: bytes) -> np.ndarray:
+        # Expect mono PCM. For pcm16le: int16 little-endian, for float32: IEEE 754 little-endian
+        if self.audio_format == "float32":
+            arr = np.frombuffer(data, dtype='<f4')  # little-endian float32
+            return arr.astype(np.float32)
+        # default pcm16
+        arr = np.frombuffer(data, dtype='<i2')
+        return (arr.astype(np.float32) / 32768.0)
+
+    def decode_json_audio(self, payload: Dict[str, Any]) -> np.ndarray:
+        b64 = payload.get("chunk_base64")
+        if not b64:
+            return np.array([], dtype=np.float32)
+        raw = base64.b64decode(b64)
+        return self.decode_binary_audio(raw)
+
+
+app = FastAPI(title="Quran Muaalem WebSocket API")
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    # Load the model once
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    app.state.muaalem = Muaalem(device=device)
+
+
+@app.get("/health")
+async def health() -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    await ws.accept()
+    muaalem: Muaalem = app.state.muaalem
+    session = SessionState(muaalem)
+
+    try:
+        # Expect initial config
+        initial = await ws.receive_text()
+        cfg = json.loads(initial)
+        if not isinstance(cfg, dict) or cfg.get("type") != "config":
+            await ws.send_text(json.dumps({"type": "error", "message": "First message must be a 'config' JSON"}))
+            await ws.close(code=1002)
+            return
+        session.configure(cfg)
+        await ws.send_text(json.dumps({"type": "ready", "sampling_rate": session.sr, "audio_format": session.audio_format}))
+
+        while True:
+            msg = await ws.receive()
+
+            if "bytes" in msg and msg["bytes"] is not None:
+                samples = session.decode_binary_audio(msg["bytes"])  # np.float32
+                new_chunks = session.buffer.push_samples(samples)
+            elif "text" in msg and msg["text"] is not None:
+                try:
+                    payload = json.loads(msg["text"]) if msg["text"] else {}
+                except json.JSONDecodeError:
+                    await ws.send_text(json.dumps({"type": "error", "message": "Invalid JSON"}))
+                    continue
+
+                mtype = payload.get("type")
+                if mtype == "audio":
+                    samples = session.decode_json_audio(payload)
+                    new_chunks = session.buffer.push_samples(samples)
+                elif mtype == "reset":
+                    session.buffer.reset()
+                    await ws.send_text(json.dumps({"type": "reset_ack"}))
+                    continue
+                elif mtype == "end":
+                    await ws.send_text(json.dumps({"type": "bye"}))
+                    await ws.close()
+                    return
+                elif mtype == "ping":
+                    await ws.send_text(json.dumps({"type": "pong"}))
+                    continue
+                else:
+                    await ws.send_text(json.dumps({"type": "error", "message": "Unsupported message type"}))
+                    continue
+            else:
+                # Unknown frame
+                await ws.send_text(json.dumps({"type": "error", "message": "Unsupported frame"}))
+                continue
+
+            # If we formed one or more 2s chunks, run inference on the current window
+            if new_chunks:
+                window = session.buffer.current_window()
+                if window is None or session.phonetizer_out is None:
+                    continue
+
+                    
+                async with session.lock:
+                    try:
+                        outs: List[MuaalemOutput] = session.muaalem(
+                            [window],
+                            [session.phonetizer_out],
+                            sampling_rate=session.sr,
+                        )
+                    except Exception as e:
+                        await ws.send_text(json.dumps({"type": "error", "message": f"inference_failed: {e}"}))
+                        continue
+
+                if not outs:
+                    await ws.send_text(json.dumps({"type": "error", "message": "empty_output"}))
+                    continue
+
+                out = outs[0]
+                result: Dict[str, Any] = {
+                    "phonemes": {
+                        "text": getattr(out.phonemes, "text", None),
+                        "probs": _to_serializable(getattr(out.phonemes, "probs", None)),
+                        "ids": _to_serializable(getattr(out.phonemes, "ids", None)),
+                    },
+                    "sifat": [_to_serializable(s) for s in getattr(out, "sifat", [])],
+                }
+
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "inference",
+                            "window_chunks": session.buffer.window_chunk_count(),
+                            "total_samples": session.buffer.total_samples(),
+                            "result": result,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+
+    except WebSocketDisconnect:
+        return
+    except Exception as e:
+        try:
+            await ws.send_text(json.dumps({"type": "error", "message": str(e)}))
+        except Exception:
+            pass
+        try:
+            await ws.close(code=1011)
+        except Exception:
+            pass
+
+
+def main() -> None:
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        log_level="info",
+    )
+
+
+if __name__ == "__main__":
+    main()

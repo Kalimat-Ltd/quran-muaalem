@@ -46,10 +46,16 @@ ui = [
     "numba>=0.61.2",
     "moviepy>=2.2.1",
 ]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
 
 
 [project.scripts]
 quran-muaalem-ui = "quran_muaalem.gradio_app:main"
+# Expose an API server entrypoint
+quran-muaalem-api = "quran_muaalem.fastapi_server:main"
 
 [project.urls]
 Homepage = "https://github.com/obadx/quran-muaalem"
