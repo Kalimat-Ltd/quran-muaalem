@@ -112,6 +112,27 @@ class RollingBuffer:
     def total_samples(self) -> int:
         return sum(len(c) for c in self._chunks)
 
+    # New helpers to handle partial data on stream end
+    def staging_array(self) -> np.ndarray:
+        return np.array(self._staging, dtype=np.float32) if self._staging else np.array([], dtype=np.float32)
+
+    def any_audio_present(self) -> bool:
+        return bool(self._chunks) or bool(self._staging)
+
+    def window_with_staging(self) -> Optional[np.ndarray]:
+        if not self.any_audio_present():
+            return None
+        win = self.current_window()
+        stag = self.staging_array()
+        if win is None:
+            return stag
+        if stag.size == 0:
+            return win
+        return np.concatenate([win, stag], axis=0)
+
+    def total_samples_including_staging(self) -> int:
+        return self.total_samples() + len(self._staging)
+
 
 class SessionState:
     def __init__(self, muaalem: Muaalem):
@@ -236,9 +257,48 @@ async def ws_endpoint(ws: WebSocket):
                     await ws.send_text(json.dumps({"type": "reset_ack"}))
                     continue
                 elif mtype == "end":
-                    await ws.send_text(json.dumps({"type": "bye"}))
-                    await ws.close()
-                    return
+                    # Flush any partial audio (including <2s remainder) before closing
+                    try:
+                        if session.phonetizer_out is not None and session.buffer.any_audio_present():
+                            final_wave = session.buffer.window_with_staging()
+                            if final_wave is not None and final_wave.size > 0:
+                                async with session.lock:
+                                    try:
+                                        outs: List[MuaalemOutput] = session.muaalem(
+                                            [final_wave],
+                                            [session.phonetizer_out],
+                                            sampling_rate=session.sr,
+                                        )
+                                    except Exception as e:
+                                        await ws.send_text(json.dumps({"type": "error", "message": f"inference_failed: {e}"}))
+                                        # proceed to close
+                                        outs = []
+                                if outs:
+                                    out = outs[0]
+                                    result: Dict[str, Any] = {
+                                        "phonemes": {
+                                            "text": getattr(out.phonemes, "text", None),
+                                            "probs": _to_serializable(getattr(out.phonemes, "probs", None)),
+                                            "ids": _to_serializable(getattr(out.phonemes, "ids", None)),
+                                        },
+                                        "sifat": [_to_serializable(s) for s in getattr(out, "sifat", [])],
+                                    }
+                                    await ws.send_text(
+                                        json.dumps(
+                                            {
+                                                "type": "inference",
+                                                "final": True,
+                                                "window_chunks": session.buffer.window_chunk_count(),
+                                                "total_samples": session.buffer.total_samples_including_staging(),
+                                                "result": result,
+                                            },
+                                            ensure_ascii=False,
+                                        )
+                                    )
+                    finally:
+                        await ws.send_text(json.dumps({"type": "bye"}))
+                        await ws.close()
+                        return
                 elif mtype == "ping":
                     await ws.send_text(json.dumps({"type": "pong"}))
                     continue
@@ -256,7 +316,7 @@ async def ws_endpoint(ws: WebSocket):
                 if window is None or session.phonetizer_out is None:
                     continue
 
-                    
+                
                 async with session.lock:
                     try:
                         outs: List[MuaalemOutput] = session.muaalem(
