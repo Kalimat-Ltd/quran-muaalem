@@ -55,23 +55,68 @@ MAX_CHUNKS = 5
 
 
 def _to_serializable(obj: Any) -> Any:
-    """Convert dataclasses and tensors/ndarrays into JSON-serializable structures."""
-    try:
-        import torch  # optional, only used if available for type checks
-    except Exception:
-        torch = None
-
+    """Convert dataclasses, tensors/ndarrays and common containers into JSON-serializable types."""
+    # Dataclasses
     if is_dataclass(obj):
         return {k: _to_serializable(v) for k, v in asdict(obj).items()}
-    if torch is not None and isinstance(obj, torch.Tensor):
-        return obj.detach().cpu().tolist()
+
+    # Pydantic v2 / v1
+    if hasattr(obj, "model_dump"):
+        try:
+            return _to_serializable(obj.model_dump())
+        except Exception:
+            pass
+    if hasattr(obj, "dict"):
+        try:
+            return _to_serializable(obj.dict())
+        except Exception:
+            pass
+
+    # Torch tensor
+    try:
+        import torch as _torch  # local alias to avoid masking outer import
+        if isinstance(obj, _torch.Tensor):
+            return obj.detach().cpu().tolist()
+    except Exception:
+        pass
+
+    # Numpy arrays and scalars
     if isinstance(obj, np.ndarray):
         return obj.tolist()
-    if isinstance(obj, (list, tuple)):
+    try:
+        import numpy as _np
+        if isinstance(obj, (_np.generic,)):
+            return obj.item()
+    except Exception:
+        pass
+
+    # Builtins & simple types
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+
+    # Common containers
+    if isinstance(obj, (list, tuple, set, deque)):
         return [_to_serializable(v) for v in obj]
     if isinstance(obj, dict):
-        return {k: _to_serializable(v) for k, v in obj.items()}
-    return obj
+        return {str(k): _to_serializable(v) for k, v in obj.items()}
+
+    # Enums
+    try:
+        import enum
+        if isinstance(obj, enum.Enum):
+            return obj.value
+    except Exception:
+        pass
+
+    # Generic objects: fall back to __dict__ if available
+    if hasattr(obj, "__dict__"):
+        try:
+            return {k: _to_serializable(v) for k, v in vars(obj).items() if not callable(v) and not k.startswith("_")}
+        except Exception:
+            pass
+
+    # Last resort: string representation
+    return repr(obj)
 
 
 class RollingBuffer:
@@ -288,6 +333,7 @@ async def ws_endpoint(ws: WebSocket):
                                             {
                                                 "type": "inference",
                                                 "final": True,
+                                                "phonetizer_out": _to_serializable(session.phonetizer_out),
                                                 "window_chunks": session.buffer.window_chunk_count(),
                                                 "total_samples": session.buffer.total_samples_including_staging(),
                                                 "result": result,
@@ -346,6 +392,8 @@ async def ws_endpoint(ws: WebSocket):
                     json.dumps(
                         {
                             "type": "inference",
+                            "final": False,
+                            "phonetizer_out": _to_serializable(session.phonetizer_out),
                             "window_chunks": session.buffer.window_chunk_count(),
                             "total_samples": session.buffer.total_samples(),
                             "result": result,

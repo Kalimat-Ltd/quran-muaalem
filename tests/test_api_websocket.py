@@ -55,14 +55,43 @@ def _print_response(label: str, msg: Any) -> None:
             wc = data.get("window_chunks")
             ts = data.get("total_samples")
             phon = (data.get("result") or {}).get("phonemes") or {}
-            text = phon.get("text")
+            text = phon.get("text") if isinstance(phon, dict) else None
             text_preview = (text[:120] + "…") if isinstance(text, str) and len(text) > 120 else text
             sifat = (data.get("result") or {}).get("sifat") or []
-            probs = phon.get("probs")
-            ids = phon.get("ids")
+            probs = phon.get("probs") if isinstance(phon, dict) else None
+            ids = phon.get("ids") if isinstance(phon, dict) else None
             probs_info = f"list(len={len(probs)})" if isinstance(probs, list) else ("array" if probs is not None else "None")
             ids_info = f"list(len={len(ids)})" if isinstance(ids, list) else ("array" if ids is not None else "None")
-            print(f"[{label}] type=inference window_chunks={wc} total_samples={ts} text={text_preview!r} sifat_count={len(sifat)} probs={probs_info} ids={ids_info}")
+
+            # Summarize phonetizer_out (reference)
+            ref = data.get("phonetizer_out")
+            ref_text_preview = None
+            ref_sifat_count = None
+            if isinstance(ref, dict):
+                ref_phon = ref.get("phonemes")
+                if isinstance(ref_phon, dict):
+                    rtext = ref_phon.get("text")
+                elif isinstance(ref_phon, str):
+                    rtext = ref_phon
+                elif isinstance(ref_phon, list):
+                    # join first few items if list of strings
+                    try:
+                        rtext = "".join(ref_phon[:30]) if ref_phon and isinstance(ref_phon[0], str) else None
+                    except Exception:
+                        rtext = None
+                else:
+                    rtext = None
+                if isinstance(rtext, str):
+                    ref_text_preview = (rtext[:120] + "…") if len(rtext) > 120 else rtext
+                ref_sifat = ref.get("sifat")
+                if isinstance(ref_sifat, list):
+                    ref_sifat_count = len(ref_sifat)
+
+            print(
+                f"[{label}] type=inference window_chunks={wc} total_samples={ts} "
+                f"text={text_preview!r} sifat_count={len(sifat)} probs={probs_info} ids={ids_info} "
+                f"ref_text={ref_text_preview!r} ref_sifat_count={ref_sifat_count}"
+            )
         else:
             # Print compact JSON for control messages
             compact = json.dumps(data, ensure_ascii=False)
@@ -196,6 +225,14 @@ async def test_ws_inference_end_to_end():
             assert inf is not None, f"No inference received after frames for chunk {chunk_idx+1}"
             assert isinstance(inf.get("window_chunks"), int)
             assert inf["window_chunks"] == chunk_idx + 1
+
+            # Assert phonetizer_out presence and basic structure
+            assert "phonetizer_out" in inf
+            ref = inf["phonetizer_out"]
+            assert isinstance(ref, dict)
+            assert "phonemes" in ref
+            assert "sifat" in ref
+
             inferences.append(inf)
 
         assert len(inferences) == max_chunks
@@ -251,6 +288,7 @@ async def test_ws_reset_and_reuse():
 
         # Expect inference
         got_inference = False
+        last_inf = None
         for _ in range(20):
             msg = await asyncio.wait_for(ws.recv(), timeout=45)
             _print_response("RECV", msg)  # Print all responses
@@ -262,10 +300,18 @@ async def test_ws_reset_and_reuse():
                 continue
             if data.get("type") == "inference":
                 got_inference = True
+                last_inf = data
                 break
             elif data.get("type") == "error":
                 pytest.fail(f"Server returned error: {data}")
         assert got_inference, "No inference received after reset"
+
+        # Assert phonetizer_out structure on the received inference
+        assert last_inf is not None and "phonetizer_out" in last_inf
+        ref = last_inf["phonetizer_out"]
+        assert isinstance(ref, dict)
+        assert "phonemes" in ref
+        assert "sifat" in ref
 
         await ws.send(json.dumps({"type": "end"}))
 
