@@ -436,6 +436,40 @@ async def ws_endpoint(ws: WebSocket):
 
 def main() -> None:
     import uvicorn
+    import copy
+    try:
+        from uvicorn.config import LOGGING_CONFIG as UVICORN_LOGGING_CONFIG
+    except Exception:
+        UVICORN_LOGGING_CONFIG = None
+
+    # Start from Uvicorn's default logging config and only add timestamps
+    if UVICORN_LOGGING_CONFIG is not None:
+        log_config = copy.deepcopy(UVICORN_LOGGING_CONFIG)
+        # Uvicorn's formatters use 'fmt' key with its custom formatter classes
+        if "formatters" in log_config:
+            if "default" in log_config["formatters"]:
+                log_config["formatters"]["default"]["fmt"] = "%(asctime)s - %(levelprefix)s %(message)s"
+            if "access" in log_config["formatters"]:
+                log_config["formatters"]["access"]["fmt"] = "%(asctime)s - %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s"
+    else:
+        # Fallback: minimal config with timestamps, still avoiding duplicates
+        log_config = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "format": "%(asctime)s - %(levelname)s - %(message)s",
+                },
+            },
+            "handlers": {
+                "default": {
+                    "class": "logging.StreamHandler",
+                    "formatter": "default",
+                    "stream": "ext://sys.stdout",
+                },
+            },
+            "root": {"handlers": ["default"], "level": "INFO"},
+        }
 
     uvicorn.run(
         app,
@@ -443,6 +477,7 @@ def main() -> None:
         port=8000,
         reload=False,
         log_level="info",
+        log_config=log_config,
     )
 
 
