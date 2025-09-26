@@ -248,3 +248,107 @@ def explain_for_terminal(
     print(result)
     sifat_table = expalin_sifat(sifat, exp_sifat, diffs)
     print_sifat_table(sifat_table, lang=lang)  # Add this line to print the table
+
+
+def explain_terminal_new(
+    phonemes: str,
+    exp_phonemes: str,
+    exp_char_map: list[int | None],
+    uthmani_text: str,
+):
+    """Explain results in terminal and print a Uthmani-aligned, colorized view.
+
+    Behavior:
+    - Computes diffs between the reference phonemes (from the phonetizer) and the
+      predicted phonemes.
+    - Uses exp_char_map to map each reference phoneme back to an index in the
+      original Uthmani text.
+    - Styles each Uthmani character according to whether the mapped phonemes are
+      exact (white), deleted/missing (red strike), or mixed/partial (yellow).
+    - Prints the phoneme-level diff (colored) and the styled Uthmani line, then
+      prints the sifat comparison table (reusing existing helpers).
+
+    Args:
+        phonemes: predicted phonemes string (model output)
+        exp_phonemes: expected/reference phonemes string (phonetizer output)
+        exp_char_map: list mapping each char in exp_phonemes -> index in uthmani_text
+        uthmani_text: the original Uthmani text string
+    """
+    # Build diffs (reference = exp_phonemes, predicted = phonemes)
+    dmp_obj = dmp.diff_match_patch()
+    diffs = dmp_obj.diff_main(exp_phonemes, phonemes)
+
+    # 1) Print phoneme-level diff (same as explain_for_terminal but keep it here)
+    phoneme_text = Text()
+    for op, data in diffs:
+        if op == dmp_obj.DIFF_EQUAL:
+            phoneme_text.append(data, style="white")
+        elif op == dmp_obj.DIFF_INSERT:
+            phoneme_text.append(data, style="green")
+        elif op == dmp_obj.DIFF_DELETE:
+            phoneme_text.append(data, style="red strike")
+
+    print(phoneme_text)
+
+    # 2) Map reference phoneme ops to indices in exp_phonemes
+    # Create an array of operations aligned to each index of exp_phonemes.
+    ops_per_ref_idx: list[str] = []
+    for op, data in diffs:
+        if op == dmp_obj.DIFF_EQUAL:
+            ops_per_ref_idx.extend(["equal"] * len(data))
+        elif op == dmp_obj.DIFF_DELETE:
+            ops_per_ref_idx.extend(["delete"] * len(data))
+        elif op == dmp_obj.DIFF_INSERT:
+            # Inserts correspond to predicted-only phonemes and do not consume
+            # reference indices, so they do not affect ops_per_ref_idx length.
+            continue
+
+    # Truncate/pad to reference length
+    if len(ops_per_ref_idx) < len(exp_phonemes):
+        ops_per_ref_idx.extend(["equal"] * (len(exp_phonemes) - len(ops_per_ref_idx)))
+    elif len(ops_per_ref_idx) > len(exp_phonemes):
+        ops_per_ref_idx = ops_per_ref_idx[: len(exp_phonemes)]
+
+    # 3) Aggregate per-Uthmani-index styles because multiple reference phonemes
+    # might map to the same Uthmani character.
+    uth_style_counts: dict[int, dict[str, int]] = {}
+    for ref_idx, op in enumerate(ops_per_ref_idx):
+        try:
+            map_idx = exp_char_map[ref_idx] if ref_idx < len(exp_char_map) else None
+        except Exception:
+            map_idx = None
+        if map_idx is None:
+            continue
+        if not isinstance(map_idx, int):
+            continue
+        if map_idx not in uth_style_counts:
+            uth_style_counts[map_idx] = {"equal": 0, "delete": 0}
+        if op == "equal":
+            uth_style_counts[map_idx]["equal"] += 1
+        elif op == "delete":
+            uth_style_counts[map_idx]["delete"] += 1
+
+    # 4) Produce styled Uthmani text
+    uth_text = Text()
+    for idx, ch in enumerate(uthmani_text):
+        style = None
+        counts = uth_style_counts.get(idx)
+        if counts is None:
+            # No mapping -> dim (unreferenced character / diacritics)
+            style = "dim"
+        else:
+            e = counts.get("equal", 0)
+            d = counts.get("delete", 0)
+            if e > 0 and d == 0:
+                style = "white"
+            elif d > 0 and e == 0:
+                style = "red strike"
+            else:
+                # Mixed tags on same Uthmani char: partial mismatch
+                style = "yellow"
+        uth_text.append(ch, style=style)
+
+    # Print a labeled Uthmani line
+    console = Console()
+    console.print("\nUthmani-aligned view:")
+    console.print(uth_text)

@@ -7,6 +7,8 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pytest
 
+from quran_muaalem.explain import explain_terminal_new
+
 # Optional dependency: websockets
 try:
     from websockets.asyncio.client import connect as ws_connect  # websockets>=11
@@ -92,6 +94,7 @@ def _print_response(label: str, msg: Any) -> None:
                 f"text={text_preview!r} sifat_count={len(sifat)} probs={probs_info} ids={ids_info} "
                 f"ref_text={ref_text_preview!r} ref_sifat_count={ref_sifat_count}"
             )
+            explain_terminal_new(phonemes=text or "", exp_phonemes=ref_text_preview, exp_char_map=ref["char_map"], uthmani_text=data.get("uthmani") or "")
         else:
             # Print compact JSON for control messages
             compact = json.dumps(data, ensure_ascii=False)

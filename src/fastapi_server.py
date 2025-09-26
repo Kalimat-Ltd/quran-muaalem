@@ -356,6 +356,7 @@ async def ws_endpoint(ws: WebSocket):
                                                 "window_chunks": session.buffer.window_chunk_count(),
                                                 "total_samples": session.buffer.total_samples_including_staging(),
                                                 "result": result,
+                                                "uthmani": session.aya_ref_text,
                                             },
                                             ensure_ascii=False,
                                         )
@@ -416,6 +417,7 @@ async def ws_endpoint(ws: WebSocket):
                             "window_chunks": session.buffer.window_chunk_count(),
                             "total_samples": session.buffer.total_samples(),
                             "result": result,
+                            "uthmani": session.aya_ref_text,
                         },
                         ensure_ascii=False,
                     )
