@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
+import logging
 from dataclasses import asdict, is_dataclass
 from typing import Any, Deque, Dict, List, Optional
 
@@ -13,6 +14,9 @@ from fastapi.responses import JSONResponse
 
 from quran_muaalem import Muaalem, MuaalemOutput
 from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
+import diff_match_patch as dmp
+
+logger = logging.getLogger(__name__)
 
 # WebSocket protocol
 # 1) Client connects to ws://<host>:<port>/ws
@@ -173,6 +177,13 @@ class RollingBuffer:
 
 
 class SessionState:
+    MIN_WINDOW_WORDS = 11
+    REMAINING_THRESHOLD = 10
+    SHIFT_SIZE = 10
+    WORD_MATCH_RATIO = 0.7
+    FORCE_SLIDE_AFTER = 10
+    PREFETCH_THRESHOLD_WORDS = 10
+
     def __init__(self, muaalem: Muaalem):
         self.muaalem = muaalem
         self.sr = DEFAULT_SR
@@ -181,12 +192,459 @@ class SessionState:
         self.buffer = RollingBuffer(self.sr)
         self.lock = asyncio.Lock()
 
+        self.moshaf: Optional[MoshafAttributes] = None
+        self.aya_obj: Optional[Aya] = None
+        self.full_aya_words: List[str] = []
+        self.current_window_start_word: int = 1
+        self.current_window_word_count: int = 0
+        self.window_end_word: int = 0
+        self.window_extended_once = False
+        self.char_to_word_map: Dict[int, int] = {}
+        self._dmp = dmp.diff_match_patch()
+        self._post_extension_stall = 0
+        self.cumulative_matched_words = 0
+        self.global_char_matches: set[int] = set()
+        self.full_aya_text: str = ""
+        self.full_word_char_offsets: List[int] = []
+        self._window_word_char_offsets: List[int] = []
+        self._window_global_char_indices: Dict[int, int] = {}
+        self._window_global_char_set: set[int] = set()
+        self._window_char_matches: set[int] = set()
+        self.current_surah: int = 0
+        self.current_ayah: int = 0
+        self._window_word_global_char_sets: Dict[int, set[int]] = {}
+        self._ayah_segments: Deque[Dict[str, Any]] = deque()
+        self._next_surah_candidate: int = 0
+        self._next_ayah_candidate: int = 0
+
+    @staticmethod
+    def _normalize_uthmani_text(text: str) -> str:
+        return " ".join(text.split())
+
+    @staticmethod
+    def _build_char_to_word_map(text: str) -> Dict[int, int]:
+        mapping: Dict[int, int] = {}
+        word_idx = -1
+        in_word = False
+        for idx, ch in enumerate(text):
+            if ch.isspace():
+                in_word = False
+                continue
+            if not in_word:
+                word_idx += 1
+                in_word = True
+            mapping[idx] = word_idx
+        return mapping
+
+    def _recompute_full_offsets(self) -> None:
+        if not self.full_aya_words:
+            self.full_aya_text = ""
+            self.full_word_char_offsets = []
+            return
+
+        self.full_aya_text = " ".join(self.full_aya_words)
+        self.full_word_char_offsets = []
+        offset = 0
+        for idx, word in enumerate(self.full_aya_words):
+            self.full_word_char_offsets.append(offset)
+            offset += len(word)
+            if idx < len(self.full_aya_words) - 1:
+                offset += 1
+
+    def _set_reference_window(self, start_word: int, count: int) -> None:
+        if self.aya_obj is None or self.moshaf is None:
+            raise RuntimeError("Session not configured")
+
+        total_words = len(self.full_aya_words)
+        if total_words == 0:
+            raise ValueError("Selected ayah has no words")
+
+        start_word = max(1, start_word)
+        start_idx = min(max(start_word - 1, 0), total_words - 1)
+        available = total_words - start_idx
+        if available <= 0:
+            start_idx = 0
+            start_word = 1
+            available = total_words
+
+        count = max(1, min(count, available))
+
+        window_words = self.full_aya_words[start_idx : start_idx + count]
+
+        if not window_words:
+            window_words = self.full_aya_words[:]
+            start_idx = 0
+            start_word = 1
+
+        normalized_text = self._normalize_uthmani_text(" ".join(window_words))
+        words = normalized_text.split()
+
+        if not words or len(words) != len(window_words):
+            words = window_words[:]
+            normalized_text = " ".join(words)
+
+        self.aya_ref_text = normalized_text
+        self.phonetizer_out = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True)
+        self.char_to_word_map = self._build_char_to_word_map(normalized_text)
+        self.current_window_start_word = start_idx + 1
+        self.current_window_word_count = len(words)
+        if self.current_window_word_count > 0:
+            self.window_end_word = self.current_window_start_word + self.current_window_word_count - 1
+        else:
+            self.window_end_word = self.current_window_start_word - 1
+
+        if self.cumulative_matched_words < self.current_window_start_word - 1:
+            self.cumulative_matched_words = self.current_window_start_word - 1
+
+        self._window_word_char_offsets = []
+        offset = 0
+        for idx, word in enumerate(words):
+            self._window_word_char_offsets.append(offset)
+            offset += len(word)
+            if idx < len(words) - 1:
+                offset += 1
+
+        self._window_global_char_indices = {}
+        self._window_global_char_set = set()
+        self._window_word_global_char_sets = {i: set() for i in range(len(words))}
+        self._window_char_matches = set()
+        for char_idx, word_idx in self.char_to_word_map.items():
+            if word_idx is None or word_idx < 0:
+                continue
+            if word_idx >= len(self._window_word_char_offsets):
+                continue
+            global_word_idx = self.current_window_start_word - 1 + word_idx
+            if global_word_idx < 0 or global_word_idx >= len(self.full_word_char_offsets):
+                continue
+            local_offset = char_idx - self._window_word_char_offsets[word_idx]
+            if local_offset < 0:
+                continue
+            global_char_idx = self.full_word_char_offsets[global_word_idx] + local_offset
+            self._window_global_char_indices[char_idx] = global_char_idx
+            self._window_global_char_set.add(global_char_idx)
+            try:
+                self._window_word_global_char_sets[word_idx].add(global_char_idx)
+            except KeyError:
+                pass
+        if self.global_char_matches:
+            retained = self.global_char_matches & self._window_global_char_set
+            if retained:
+                self._window_char_matches.update(retained)
+
+    def _reference_phoneme_text(self) -> str:
+        if self.phonetizer_out is None:
+            return ""
+        phonemes = getattr(self.phonetizer_out, "phonemes", "")
+        if isinstance(phonemes, str):
+            return phonemes
+        return getattr(phonemes, "text", "") or ""
+
+    def _word_match_progress(self, predicted_phonemes: str) -> tuple[int, int, float]:
+        reference = self._reference_phoneme_text()
+        if not reference:
+            return 0, self.current_window_word_count, 0.0
+
+        diffs = self._dmp.diff_main(reference, predicted_phonemes or "")
+        ops: List[str] = []
+        for op, data in diffs:
+            if op == self._dmp.DIFF_EQUAL:
+                ops.extend(["equal"] * len(data))
+            elif op == self._dmp.DIFF_DELETE:
+                ops.extend(["delete"] * len(data))
+
+        ref_len = len(reference)
+        if len(ops) < ref_len:
+            ops.extend(["delete"] * (ref_len - len(ops)))
+        elif len(ops) > ref_len:
+            ops = ops[:ref_len]
+
+        char_map = getattr(self.phonetizer_out, "char_map", []) if self.phonetizer_out is not None else []
+        matched_global_chars: set[int] = set()
+        for ref_idx, op in enumerate(ops):
+            if op != "equal":
+                continue
+            try:
+                char_idx = char_map[ref_idx]
+            except Exception:
+                char_idx = None
+            if not isinstance(char_idx, int):
+                continue
+            word_idx = self.char_to_word_map.get(char_idx)
+            if word_idx is None:
+                continue
+            global_char_idx = self._window_global_char_indices.get(char_idx)
+            if global_char_idx is not None:
+                matched_global_chars.add(global_char_idx)
+
+        total_words = self.current_window_word_count
+        if matched_global_chars:
+            self.global_char_matches.update(matched_global_chars)
+            window_matches = matched_global_chars & self._window_global_char_set
+            if window_matches:
+                self._window_char_matches.update(window_matches)
+
+        window_char_set = self._window_global_char_set
+        if window_char_set:
+            matched_char_count = len(self._window_char_matches)
+            char_ratio = matched_char_count / len(window_char_set)
+        else:
+            char_ratio = 0.0
+
+        prefix_matched = 0
+        for word_idx in range(total_words):
+            word_char_set = self._window_word_global_char_sets.get(word_idx)
+            if not word_char_set:
+                break
+            matched_in_word = len(word_char_set & self._window_char_matches)
+            ratio = matched_in_word / len(word_char_set)
+            if ratio < self.WORD_MATCH_RATIO:
+                break
+            prefix_matched += 1
+
+        remaining = max(total_words - prefix_matched, 0)
+        return prefix_matched, remaining, char_ratio
+
+    def _update_cumulative_progress(self, matched_words: int) -> None:
+        if matched_words <= 0:
+            return
+        total_words = len(self.full_aya_words)
+        if total_words <= 0:
+            return
+        window_start_idx = max(self.current_window_start_word - 1, 0)
+        if window_start_idx > self.cumulative_matched_words:
+            return
+        candidate = window_start_idx + matched_words
+        if candidate <= self.cumulative_matched_words:
+            return
+        self.cumulative_matched_words = min(total_words, candidate)
+
+    def _slide_window_based_on_cumulative(self, *, force: bool = False) -> None:
+        total_words = len(self.full_aya_words)
+        if total_words == 0 or self.current_window_word_count <= 0:
+            return
+
+        matched_from_start = self.cumulative_matched_words - (self.current_window_start_word - 1)
+        if not force and matched_from_start < self.SHIFT_SIZE:
+            return
+
+        available_after = self._available_words_after_window()
+        if available_after <= 0:
+            return
+
+        baseline_start = max(1, self.cumulative_matched_words - self.SHIFT_SIZE + 1)
+        max_start_allowed = max(1, total_words - self.current_window_word_count + 1)
+        max_shift = min(self.SHIFT_SIZE, available_after)
+        preferred_start = self.current_window_start_word + max_shift
+        minimum_increment = self.current_window_start_word + 1
+
+        if force:
+            candidate_start = max(preferred_start, baseline_start, minimum_increment)
+        else:
+            candidate_start = max(preferred_start, baseline_start)
+
+        new_start = min(candidate_start, max_start_allowed)
+
+        if new_start <= self.current_window_start_word:
+            if max_shift <= 0:
+                return
+            new_start = min(self.current_window_start_word + max_shift, max_start_allowed)
+            if new_start <= self.current_window_start_word:
+                return
+
+        if not force and new_start - 1 > self.cumulative_matched_words:
+            return
+
+        try:
+            self._set_reference_window(new_start, self.current_window_word_count)
+        except Exception:
+            return
+        if force and new_start - 1 > self.cumulative_matched_words:
+            total_words = len(self.full_aya_words)
+            self.cumulative_matched_words = min(total_words, new_start - 1)
+        self._post_extension_stall = 0
+
+    def reset_progress(self) -> None:
+        self.buffer.reset()
+        self.cumulative_matched_words = max(0, self.current_window_start_word - 1)
+        self.window_extended_once = False
+        self._post_extension_stall = 0
+        self.global_char_matches = set()
+        self._window_global_char_indices = {}
+        self._window_global_char_set = set()
+        self._window_word_global_char_sets = {}
+        self._window_char_matches = set()
+
+    def _available_words_after_window(self) -> int:
+        total_words = len(self.full_aya_words)
+        if self.window_end_word <= 0:
+            return 0
+        return max(total_words - self.window_end_word, 0)
+
+    def _set_next_candidate_after(self, surah: int, ayah: int) -> None:
+        if surah <= 0 or ayah <= 0:
+            self._next_surah_candidate = 0
+            self._next_ayah_candidate = 0
+            return
+        self._next_surah_candidate = surah
+        self._next_ayah_candidate = ayah + 1
+
+    def _append_next_ayah(self) -> bool:
+        next_data = self._find_next_ayah_data()
+        if not next_data:
+            return False
+
+        start_word = len(self.full_aya_words) + 1
+        self.full_aya_words.extend(next_data["words"])
+        self._recompute_full_offsets()
+        end_word = len(self.full_aya_words)
+        self._ayah_segments.append(
+            {
+                "surah": next_data["surah"],
+                "ayah": next_data["ayah"],
+                "start_word": start_word,
+                "end_word": end_word,
+            }
+        )
+        print(
+            f"sliding-debug | appended ayah surah={next_data['surah']} ayah={next_data['ayah']} words={len(next_data['words'])} total_reference_words={len(self.full_aya_words)}"
+        )
+        return True
+
+    def _update_completed_segments(self) -> None:
+        while self._ayah_segments:
+            segment = self._ayah_segments[0]
+            if self.cumulative_matched_words < segment["end_word"]:
+                break
+            completed = self._ayah_segments.popleft()
+            print(
+                "sliding-debug | completed ayah segment surah=%s ayah=%s words=%s-%s"
+                % (
+                    completed["surah"],
+                    completed["ayah"],
+                    completed["start_word"],
+                    completed["end_word"],
+                )
+            )
+
+        if self._ayah_segments:
+            head = self._ayah_segments[0]
+            self.current_surah = head["surah"]
+            self.current_ayah = head["ayah"]
+
+    def _find_next_ayah_data(self) -> Optional[Dict[str, Any]]:
+        next_surah = self._next_surah_candidate
+        next_ayah = self._next_ayah_candidate
+        if next_surah <= 0 or next_surah > 114:
+            return None
+
+        while next_surah > 0 and next_surah <= 114:
+            self._next_surah_candidate = next_surah
+            self._next_ayah_candidate = next_ayah
+            if next_ayah <= 0:
+                next_ayah = 1
+            try:
+                candidate = Aya(next_surah, next_ayah)
+                full_aya = candidate.get()
+                raw_words = full_aya.uthmani_words or []
+                words = [" ".join(w.split()) for w in raw_words if isinstance(w, str) and w.strip()]
+                if words:
+                    self._set_next_candidate_after(next_surah, next_ayah)
+                    return {
+                        "surah": next_surah,
+                        "ayah": next_ayah,
+                        "words": words,
+                    }
+            except Exception:
+                pass
+
+            if next_surah >= 114:
+                break
+            next_surah += 1
+            next_ayah = 1
+
+        self._next_surah_candidate = 0
+        self._next_ayah_candidate = 0
+        return None
+
+    def _maybe_prefetch_next_ayah(self, available_after: int, *, threshold: Optional[int] = None) -> int:
+        threshold_value = self.PREFETCH_THRESHOLD_WORDS if threshold is None else threshold
+        if available_after > threshold_value:
+            return available_after
+
+        appended = self._append_next_ayah()
+        if appended:
+            return self._available_words_after_window()
+
+        return available_after
+
+    def _extend_window(self, available_after: int) -> bool:
+        if available_after <= 0 or self.current_window_word_count <= 0:
+            return False
+
+        add = min(self.SHIFT_SIZE, available_after)
+        if add <= 0:
+            return False
+
+        previous_count = self.current_window_word_count
+        try:
+            self._set_reference_window(self.current_window_start_word, self.current_window_word_count + add)
+        except Exception:
+            return False
+
+        if self.current_window_word_count > previous_count:
+            self.window_extended_once = True
+            self._post_extension_stall = 0
+            print(
+                f"sliding-debug | extended window to {self.current_window_word_count} words (start={self.current_window_start_word}, end={self.window_end_word})"
+            )
+            return True
+
+        return False
+
+    def _load_ayah(self, surah: int, ayah: int, *, preloaded_words: Optional[List[str]] = None) -> None:
+        self.current_surah = surah
+        self.current_ayah = ayah
+        self.aya_obj = Aya(surah, ayah)
+
+        if preloaded_words is not None:
+            words = [" ".join(w.split()) for w in preloaded_words if isinstance(w, str) and w.strip()]
+        else:
+            try:
+                full_aya = self.aya_obj.get()
+                words = [" ".join(w.split()) for w in (full_aya.uthmani_words or []) if w.strip()]
+            except Exception:
+                words = []
+
+        self.full_aya_words = words
+        self._recompute_full_offsets()
+
+        if not self.full_aya_words:
+            raise ValueError("Unable to resolve words for selected ayah")
+
+        self.global_char_matches = set()
+        self._window_char_matches = set()
+        self.char_to_word_map = {}
+        self._ayah_segments = deque()
+        start_word = 1
+        end_word = len(self.full_aya_words)
+        if end_word >= start_word:
+            self._ayah_segments.append(
+                {
+                    "surah": surah,
+                    "ayah": ayah,
+                    "start_word": start_word,
+                    "end_word": end_word,
+                }
+            )
+        self._set_next_candidate_after(surah, ayah)
+
     def configure(self, cfg: Dict[str, Any]) -> None:
         requested_sr = int(cfg.get("sampling_rate", DEFAULT_SR))
         if requested_sr != DEFAULT_SR:
             raise ValueError(f"sampling_rate must be {DEFAULT_SR}")
         self.sr = DEFAULT_SR
         self.buffer = RollingBuffer(self.sr)
+        self.window_extended_once = False
 
         surah = int(cfg["surah"])  # required
         ayah = int(cfg["ayah"])    # required
@@ -194,8 +652,7 @@ class SessionState:
         end_word = cfg.get("end_word")
         num_words = cfg.get("num_words")
 
-        # Build mushaf attributes (defaults align with test example)
-        moshaf = MoshafAttributes(
+        self.moshaf = MoshafAttributes(
             rewaya=cfg.get("rewaya", "hafs"),
             madd_monfasel_len=int(cfg.get("madd_monfasel_len", 2)),
             madd_mottasel_len=int(cfg.get("madd_mottasel_len", 4)),
@@ -203,24 +660,135 @@ class SessionState:
             madd_aared_len=int(cfg.get("madd_aared_len", 2)),
         )
 
-        aya_obj = Aya(surah, ayah)
-        # Robust: support either an (start, end) API or (start, num_words)
-        try:
-            if end_word is not None:
-                count = int(end_word) - int(start_word) + 1
-                if count < 1:
-                    count = 1
-                uthmani_ref = aya_obj.get_by_imlaey_words(int(start_word), int(count)).uthmani
-            elif num_words is not None:
-                uthmani_ref = aya_obj.get_by_imlaey_words(int(start_word), int(num_words)).uthmani
-            else:
-                uthmani_ref = aya_obj.get_by_imlaey_words(int(start_word), 1).uthmani
-        except Exception:
-            # Fallback to whole ayah if slicing fails
-            uthmani_ref = aya_obj.uthmani
+        self._load_ayah(surah, ayah)
 
-        self.aya_ref_text = uthmani_ref
-        self.phonetizer_out = quran_phonetizer(uthmani_ref, moshaf, remove_spaces=True)
+        total_words = len(self.full_aya_words)
+
+        available_from_start = total_words - max(start_word - 1, 0)
+        if available_from_start <= 0:
+            start_word = 1
+            available_from_start = total_words
+
+        if end_word is not None:
+            target_count = int(end_word) - int(start_word) + 1
+        elif num_words is not None:
+            target_count = int(num_words)
+        else:
+            target_count = 1
+
+        target_count = max(target_count, 1)
+        desired_count = min(max(target_count, self.MIN_WINDOW_WORDS), available_from_start)
+
+        try:
+            self._set_reference_window(start_word, desired_count)
+        except Exception:
+            # Fallback to whole ayah if segment retrieval fails
+            self._set_reference_window(1, total_words)
+
+        self.cumulative_matched_words = max(0, self.current_window_start_word - 1)
+        self._post_extension_stall = 0
+
+    def maybe_extend_reference(self, predicted_phonemes: str) -> None:
+        if self.phonetizer_out is None or not self.aya_ref_text or self.current_window_word_count <= 0:
+            return
+
+        matched, _, char_ratio = self._word_match_progress(predicted_phonemes or "")
+        self._update_cumulative_progress(matched)
+        self._update_completed_segments()
+
+        total_words = len(self.full_aya_words)
+        if total_words == 0:
+            return
+
+        available_after = self._available_words_after_window()
+        available_after = self._maybe_prefetch_next_ayah(available_after)
+        total_words = len(self.full_aya_words)
+        window_char_set = self._window_global_char_set
+        window_total_chars = len(window_char_set)
+        window_matched_chars = len(window_char_set & self.global_char_matches) if window_char_set else 0
+
+        print(
+            f"sliding-debug | window={self.current_window_start_word}-{self.window_end_word} words={self.current_window_word_count} matched_words={matched} ratio={char_ratio:.3f} chars={window_matched_chars}/{window_total_chars} cumulative={self.cumulative_matched_words} available_after={available_after} extended_once={self.window_extended_once}",
+        )
+
+        if char_ratio >= self.WORD_MATCH_RATIO:
+            if available_after > 0:
+                if not self.window_extended_once and self._extend_window(available_after):
+                    return
+
+                print(f"sliding-debug | char_ratio>={self.WORD_MATCH_RATIO:.1f} triggering slide")
+                prev_start = self.current_window_start_word
+                prev_end = self.window_end_word
+                prev_count = self.current_window_word_count
+                self._slide_window_based_on_cumulative(force=True)
+
+                if (
+                    self.current_window_start_word == prev_start
+                    and self.window_end_word == prev_end
+                    and available_after > 0
+                ):
+                    shift = min(self.SHIFT_SIZE, available_after)
+                    if shift <= 0:
+                        shift = 1
+                    max_start_allowed = max(1, len(self.full_aya_words) - prev_count + 1)
+                    fallback_start = min(prev_start + shift, max_start_allowed)
+                    if fallback_start > prev_start:
+                        try:
+                            self._set_reference_window(fallback_start, prev_count)
+                        except Exception:
+                            max_count = len(self.full_aya_words) - fallback_start + 1
+                            if max_count > 0:
+                                try:
+                                    self._set_reference_window(fallback_start, max_count)
+                                except Exception:
+                                    pass
+
+                self._post_extension_stall = 0
+            else:
+                if total_words > 0 and self.cumulative_matched_words >= total_words:
+                    appended = self._append_next_ayah()
+                    if appended:
+                        self._post_extension_stall = 0
+                        return
+                    print("sliding-debug | reference exhausted, awaiting next ayah append")
+                else:
+                    print(
+                        f"sliding-debug | window exhausted, awaiting completion (ratio={char_ratio:.3f})"
+                    )
+            return
+
+        if available_after <= 0:
+            total_words = len(self.full_aya_words)
+            if total_words > 0 and self.cumulative_matched_words >= total_words:
+                appended = self._append_next_ayah()
+                if appended:
+                    logger.debug(
+                        "sliding-debug | appended ayah on window exhaustion window=%s-%s words=%s",
+                        self.current_window_start_word,
+                        self.window_end_word,
+                        self.current_window_word_count,
+                    )
+                    self._post_extension_stall = 0
+                    return
+                self._post_extension_stall = min(self._post_extension_stall + 1, self.FORCE_SLIDE_AFTER)
+            else:
+                self._post_extension_stall = min(self._post_extension_stall + 1, self.FORCE_SLIDE_AFTER)
+                print(
+                    f"sliding-debug | terminal window waiting for matches (ratio={char_ratio:.3f})"
+                )
+            return
+
+        if not self.window_extended_once and self._extend_window(available_after):
+            return
+
+        self._post_extension_stall += 1
+        print(
+            f"sliding-debug | stall={self._post_extension_stall}/{self.FORCE_SLIDE_AFTER} (ratio={char_ratio:.3f}) waiting to force slide"
+        )
+        if self._post_extension_stall >= self.FORCE_SLIDE_AFTER:
+            print("sliding-debug | stall threshold reached, forcing slide")
+            self._slide_window_based_on_cumulative(force=True)
+            self._post_extension_stall = 0
 
     def decode_binary_audio(self, data: bytes) -> np.ndarray:
         # Expect mono PCM16LE: int16 little-endian -> float32 [-1,1]
@@ -317,7 +885,7 @@ async def ws_endpoint(ws: WebSocket):
 
                 mtype = payload.get("type")
                 if mtype == "reset":
-                    session.buffer.reset()
+                    session.reset_progress()
                     await ws.send_text(json.dumps({"type": "reset_ack"}))
                     continue
                 elif mtype == "end":
@@ -347,12 +915,27 @@ async def ws_endpoint(ws: WebSocket):
                                         },
                                         "sifat": [_to_serializable(s) for s in getattr(out, "sifat", [])],
                                     }
+                                    ph_payload: Dict[str, Any] | None = None
+                                    if session.phonetizer_out is not None:
+                                        ph_payload = {
+                                            "phonemes": {
+                                                "text": session._reference_phoneme_text(),
+                                            },
+                                            "sifat": [
+                                                _to_serializable(s)
+                                                for s in getattr(session.phonetizer_out, "sifat", [])
+                                            ],
+                                            "char_map": _to_serializable(
+                                                getattr(session.phonetizer_out, "char_map", [])
+                                            ),
+                                        }
+
                                     await ws.send_text(
                                         json.dumps(
                                             {
                                                 "type": "inference",
                                                 "final": True,
-                                                "phonetizer_out": _to_serializable(session.phonetizer_out),
+                                                "phonetizer_out": ph_payload,
                                                 "window_chunks": session.buffer.window_chunk_count(),
                                                 "total_samples": session.buffer.total_samples_including_staging(),
                                                 "result": result,
@@ -399,6 +982,8 @@ async def ws_endpoint(ws: WebSocket):
                     continue
 
                 out = outs[0]
+                current_phonetizer = session.phonetizer_out
+                current_uthmani = session.aya_ref_text
                 result: Dict[str, Any] = {
                     "phonemes": {
                         "text": getattr(out.phonemes, "text", None),
@@ -408,20 +993,37 @@ async def ws_endpoint(ws: WebSocket):
                     "sifat": [_to_serializable(s) for s in getattr(out, "sifat", [])],
                 }
 
+                ph_payload: Dict[str, Any] | None = None
+                if current_phonetizer is not None:
+                    ph_payload = {
+                        "phonemes": {
+                            "text": session._reference_phoneme_text(),
+                        },
+                        "sifat": [
+                            _to_serializable(s)
+                            for s in getattr(current_phonetizer, "sifat", [])
+                        ],
+                        "char_map": _to_serializable(
+                            getattr(current_phonetizer, "char_map", [])
+                        ),
+                    }
+
                 await ws.send_text(
                     json.dumps(
                         {
                             "type": "inference",
                             "final": False,
-                            "phonetizer_out": _to_serializable(session.phonetizer_out),
+                            "phonetizer_out": ph_payload,
                             "window_chunks": session.buffer.window_chunk_count(),
                             "total_samples": session.buffer.total_samples(),
                             "result": result,
-                            "uthmani": session.aya_ref_text,
+                            "uthmani": current_uthmani,
                         },
                         ensure_ascii=False,
                     )
                 )
+
+                session.maybe_extend_reference(getattr(out.phonemes, "text", "") or "")
 
     except WebSocketDisconnect:
         return

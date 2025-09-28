@@ -243,7 +243,7 @@ async def test_ws_inference_end_to_end():
 
 
 @pytest.mark.skipif(ws_connect is None, reason="websockets package not installed")
-@pytest.mark.skipif(not _server_is_up(), reason="API server not running on localhost:8000")
+@pytest.mark.skipif(not _server_is_up(), reason=f"API server not running on {WS_URL}")
 @pytest.mark.asyncio
 async def test_ws_reset_and_reuse():
     i16, pcm = _load_wav_pcm16()
