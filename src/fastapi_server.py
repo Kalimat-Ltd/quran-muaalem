@@ -5,12 +5,14 @@ import json
 from collections import deque
 import logging
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
 import numpy as np
 import torch
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from quran_muaalem import Muaalem, MuaalemOutput
 from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
@@ -206,6 +208,9 @@ class SessionState:
         self.global_char_matches: set[int] = set()
         self.full_aya_text: str = ""
         self.full_word_char_offsets: List[int] = []
+        self.full_char_to_word_map: Dict[int, int] = {}
+        self.full_phonetizer_out = None
+        self._full_phoneme_prefix: List[int] = [0]
         self._window_word_char_offsets: List[int] = []
         self._window_global_char_indices: Dict[int, int] = {}
         self._window_global_char_set: set[int] = set()
@@ -235,6 +240,84 @@ class SessionState:
                 in_word = True
             mapping[idx] = word_idx
         return mapping
+
+    @staticmethod
+    def _normalize_char_map(char_map: List[Any], text_length: int) -> List[Optional[int]]:
+        positive_indices = [idx for idx in char_map if isinstance(idx, int) and idx >= 0]
+        shift = 0
+        if positive_indices:
+            if max(positive_indices) >= text_length or (min(positive_indices) >= 1 and 0 not in positive_indices):
+                shift = 1
+
+        normalized: List[Optional[int]] = []
+        for idx in char_map:
+            if not isinstance(idx, int):
+                normalized.append(None)
+                continue
+            adjusted = idx - shift
+            if 0 <= adjusted < text_length:
+                normalized.append(adjusted)
+            else:
+                normalized.append(None)
+        return normalized
+
+    def _prepare_full_reference(self) -> None:
+        self.full_char_to_word_map = {}
+        self.full_phonetizer_out = None
+        self._full_phoneme_prefix = [0]
+
+        if not self.full_aya_words or self.moshaf is None:
+            return
+
+        full_text = self._normalize_uthmani_text(" ".join(self.full_aya_words))
+        self.full_aya_text = full_text
+        self.full_char_to_word_map = self._build_char_to_word_map(full_text)
+
+        try:
+            self.full_phonetizer_out = quran_phonetizer(full_text, self.moshaf, remove_spaces=True)
+        except Exception:
+            self.full_phonetizer_out = None
+            return
+
+        phonemes = getattr(self.full_phonetizer_out, "phonemes", "")
+        char_map = getattr(self.full_phonetizer_out, "char_map", [])
+        if not isinstance(phonemes, str) or not isinstance(char_map, list):
+            return
+
+        normalized_map = self._normalize_char_map(char_map, len(full_text))
+        word_count = len(self.full_aya_words)
+        if word_count <= 0:
+            return
+
+        counts = [0] * word_count
+        current_word_idx: Optional[int] = 0
+        for map_idx in normalized_map:
+            if map_idx is not None:
+                mapped_word = self.full_char_to_word_map.get(map_idx)
+                if mapped_word is not None:
+                    current_word_idx = mapped_word
+            if current_word_idx is None or current_word_idx < 0 or current_word_idx >= word_count:
+                continue
+            counts[current_word_idx] += 1
+
+        prefix: List[int] = [0]
+        total = 0
+        for count in counts:
+            total += count
+            prefix.append(total)
+
+        # If some phoneme characters had no mapping, distribute them to the last word
+        phoneme_length = len(phonemes)
+        if prefix[-1] < phoneme_length and word_count > 0:
+            missing = phoneme_length - prefix[-1]
+            prefix[-1] += missing
+            for idx in range(word_count - 1, -1, -1):
+                if counts[idx] > 0 or idx == word_count - 1:
+                    for j in range(idx + 1, len(prefix)):
+                        prefix[j] += missing
+                    break
+
+        self._full_phoneme_prefix = prefix
 
     def _recompute_full_offsets(self) -> None:
         if not self.full_aya_words:
@@ -496,6 +579,7 @@ class SessionState:
         start_word = len(self.full_aya_words) + 1
         self.full_aya_words.extend(next_data["words"])
         self._recompute_full_offsets()
+        self._prepare_full_reference()
         end_word = len(self.full_aya_words)
         self._ayah_segments.append(
             {
@@ -577,6 +661,33 @@ class SessionState:
 
         return available_after
 
+    def current_offsets(self) -> Dict[str, int]:
+        word_idx = max(self.current_window_start_word - 1, 0)
+        total_words = len(self.full_aya_words)
+        if total_words <= 0:
+            return {
+                "uthmani_word_offset": 0,
+                "uthmani_char_offset": 0,
+                "phoneme_char_offset": 0,
+            }
+
+        if word_idx >= total_words:
+            word_idx = total_words - 1
+
+        uthmani_char_offset = 0
+        if 0 <= word_idx < len(self.full_word_char_offsets):
+            uthmani_char_offset = self.full_word_char_offsets[word_idx]
+
+        phoneme_char_offset = 0
+        if self._full_phoneme_prefix and word_idx < len(self._full_phoneme_prefix):
+            phoneme_char_offset = self._full_phoneme_prefix[word_idx]
+
+        return {
+            "uthmani_word_offset": word_idx,
+            "uthmani_char_offset": uthmani_char_offset,
+            "phoneme_char_offset": phoneme_char_offset,
+        }
+
     def _extend_window(self, available_after: int) -> bool:
         if available_after <= 0 or self.current_window_word_count <= 0:
             return False
@@ -617,6 +728,8 @@ class SessionState:
 
         self.full_aya_words = words
         self._recompute_full_offsets()
+
+        self._prepare_full_reference()
 
         if not self.full_aya_words:
             raise ValueError("Unable to resolve words for selected ayah")
@@ -930,6 +1043,8 @@ async def ws_endpoint(ws: WebSocket):
                                             ),
                                         }
 
+                                    offsets = session.current_offsets()
+
                                     await ws.send_text(
                                         json.dumps(
                                             {
@@ -940,6 +1055,7 @@ async def ws_endpoint(ws: WebSocket):
                                                 "total_samples": session.buffer.total_samples_including_staging(),
                                                 "result": result,
                                                 "uthmani": session.aya_ref_text,
+                                                "offsets": offsets,
                                             },
                                             ensure_ascii=False,
                                         )
@@ -1008,6 +1124,8 @@ async def ws_endpoint(ws: WebSocket):
                         ),
                     }
 
+                offsets = session.current_offsets()
+
                 await ws.send_text(
                     json.dumps(
                         {
@@ -1018,6 +1136,7 @@ async def ws_endpoint(ws: WebSocket):
                             "total_samples": session.buffer.total_samples(),
                             "result": result,
                             "uthmani": current_uthmani,
+                            "offsets": offsets,
                         },
                         ensure_ascii=False,
                     )

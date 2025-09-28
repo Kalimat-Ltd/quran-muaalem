@@ -17,6 +17,7 @@ from quran_muaalem.muaalem_typing import Unit, Sifa, SingleUnit
 from quran_muaalem.modeling.multi_level_tokenizer import MultiLevelTokenizer
 from quran_muaalem.inference import format_sifat, Muaalem
 from quran_muaalem.explain import explain_for_terminal
+from fastapi_server import SessionState
 
 
 @pytest.mark.parametrize(
@@ -193,6 +194,20 @@ def test_ctc_decode(batch_ids, batch_probs, ex_batch_ids, ex_batch_probs):
         print(f"EXP Probs: {torch.FloatTensor(ex_batch_probs[idx])}")
         torch.testing.assert_close(outs[idx].ids, torch.LongTensor(ex_batch_ids[idx]))
         torch.testing.assert_close(outs[idx].p, torch.FloatTensor(ex_batch_probs[idx]))
+
+
+def test_session_state_current_offsets_basic():
+    session = SessionState(muaalem=None)  # type: ignore[arg-type]
+    session.full_aya_words = ["abc", "def", "ghi"]
+    session.full_word_char_offsets = [0, 4, 8]
+    session._full_phoneme_prefix = [0, 3, 7, 10]
+    session.current_window_start_word = 2
+
+    offsets = session.current_offsets()
+
+    assert offsets["uthmani_word_offset"] == 1
+    assert offsets["uthmani_char_offset"] == 4
+    assert offsets["phoneme_char_offset"] == 3
 
 
 # @pytest.mark.parametrize(

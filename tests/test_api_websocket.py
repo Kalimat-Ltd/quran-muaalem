@@ -233,6 +233,10 @@ async def test_ws_inference_end_to_end():
             assert isinstance(ref, dict)
             assert "phonemes" in ref
             assert "sifat" in ref
+            assert "offsets" in inf
+            assert isinstance(inf["offsets"], dict)
+            assert "phoneme_char_offset" in inf["offsets"]
+            assert "uthmani_word_offset" in inf["offsets"]
 
             inferences.append(inf)
 
@@ -313,6 +317,10 @@ async def test_ws_reset_and_reuse():
         assert isinstance(ref, dict)
         assert "phonemes" in ref
         assert "sifat" in ref
+        assert "offsets" in last_inf
+        assert isinstance(last_inf["offsets"], dict)
+        assert "phoneme_char_offset" in last_inf["offsets"]
+        assert "uthmani_word_offset" in last_inf["offsets"]
 
         await ws.send(json.dumps({"type": "end"}))
 
