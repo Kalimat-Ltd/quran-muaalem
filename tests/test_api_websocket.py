@@ -7,6 +7,8 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pytest
 
+from quran_muaalem.explain import explain_terminal_new
+
 # Optional dependency: websockets
 try:
     from websockets.asyncio.client import connect as ws_connect  # websockets>=11
@@ -92,6 +94,7 @@ def _print_response(label: str, msg: Any) -> None:
                 f"text={text_preview!r} sifat_count={len(sifat)} probs={probs_info} ids={ids_info} "
                 f"ref_text={ref_text_preview!r} ref_sifat_count={ref_sifat_count}"
             )
+            explain_terminal_new(phonemes=text or "", exp_phonemes=ref_text_preview, exp_char_map=ref["char_map"], uthmani_text=data.get("uthmani") or "")
         else:
             # Print compact JSON for control messages
             compact = json.dumps(data, ensure_ascii=False)
@@ -230,6 +233,10 @@ async def test_ws_inference_end_to_end():
             assert isinstance(ref, dict)
             assert "phonemes" in ref
             assert "sifat" in ref
+            assert "offsets" in inf
+            assert isinstance(inf["offsets"], dict)
+            assert "phoneme_char_offset" in inf["offsets"]
+            assert "uthmani_word_offset" in inf["offsets"]
 
             inferences.append(inf)
 
@@ -240,7 +247,7 @@ async def test_ws_inference_end_to_end():
 
 
 @pytest.mark.skipif(ws_connect is None, reason="websockets package not installed")
-@pytest.mark.skipif(not _server_is_up(), reason="API server not running on localhost:8000")
+@pytest.mark.skipif(not _server_is_up(), reason=f"API server not running on {WS_URL}")
 @pytest.mark.asyncio
 async def test_ws_reset_and_reuse():
     i16, pcm = _load_wav_pcm16()
@@ -310,6 +317,10 @@ async def test_ws_reset_and_reuse():
         assert isinstance(ref, dict)
         assert "phonemes" in ref
         assert "sifat" in ref
+        assert "offsets" in last_inf
+        assert isinstance(last_inf["offsets"], dict)
+        assert "phoneme_char_offset" in last_inf["offsets"]
+        assert "uthmani_word_offset" in last_inf["offsets"]
 
         await ws.send(json.dumps({"type": "end"}))
 
