@@ -185,6 +185,7 @@ class SessionState:
     WORD_MATCH_RATIO = 0.7
     FORCE_SLIDE_AFTER = 10
     PREFETCH_THRESHOLD_WORDS = 10
+    SLIDE_MARGIN_WORDS = 1
 
     def __init__(self, muaalem: Muaalem):
         self.muaalem = muaalem
@@ -594,6 +595,25 @@ class SessionState:
         )
         return True
 
+    def _ensure_window_capacity(self, start_word: int, required_words: int) -> None:
+        if required_words <= 0:
+            return
+
+        safe_start = max(start_word, 1)
+        guard = 0
+        max_iterations = 256
+
+        def available_from_start() -> int:
+            prefix = max(safe_start - 1, 0)
+            return max(len(self.full_aya_words) - prefix, 0)
+
+        while available_from_start() < required_words:
+            if not self._append_next_ayah():
+                break
+            guard += 1
+            if guard >= max_iterations:
+                break
+
     def _update_completed_segments(self) -> None:
         while self._ayah_segments:
             segment = self._ayah_segments[0]
@@ -761,9 +781,11 @@ class SessionState:
 
         surah = int(cfg["surah"])  # required
         ayah = int(cfg["ayah"])    # required
-        start_word = int(cfg.get("start_word", 1))
-        end_word = cfg.get("end_word")
-        num_words = cfg.get("num_words")
+        start_word = max(int(cfg.get("start_word", 1)), 1)
+        raw_end_word = cfg.get("end_word")
+        raw_num_words = cfg.get("num_words")
+        end_word = int(raw_end_word) if raw_end_word is not None else None
+        num_words = int(raw_num_words) if raw_num_words is not None else None
 
         self.moshaf = MoshafAttributes(
             rewaya=cfg.get("rewaya", "hafs"),
@@ -775,6 +797,28 @@ class SessionState:
 
         self._load_ayah(surah, ayah)
 
+        if end_word is not None:
+            target_count = end_word - start_word + 1
+        elif num_words is not None:
+            target_count = num_words
+        else:
+            target_count = self.MIN_WINDOW_WORDS
+
+        target_count = max(target_count, 1)
+        min_initial_window = max(target_count, self.MIN_WINDOW_WORDS)
+
+        self._ensure_window_capacity(start_word, min_initial_window)
+
+        if self.SHIFT_SIZE > 0:
+            extended_window = min_initial_window + self.SHIFT_SIZE
+            slide_ready_window = extended_window + max(self.SLIDE_MARGIN_WORDS, 1)
+
+            if extended_window > min_initial_window:
+                self._ensure_window_capacity(start_word, extended_window)
+
+            if slide_ready_window > extended_window:
+                self._ensure_window_capacity(start_word, slide_ready_window)
+
         total_words = len(self.full_aya_words)
 
         available_from_start = total_words - max(start_word - 1, 0)
@@ -782,14 +826,6 @@ class SessionState:
             start_word = 1
             available_from_start = total_words
 
-        if end_word is not None:
-            target_count = int(end_word) - int(start_word) + 1
-        elif num_words is not None:
-            target_count = int(num_words)
-        else:
-            target_count = 1
-
-        target_count = max(target_count, 1)
         desired_count = min(max(target_count, self.MIN_WINDOW_WORDS), available_from_start)
 
         try:
