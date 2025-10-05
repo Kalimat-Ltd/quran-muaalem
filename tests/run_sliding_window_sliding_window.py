@@ -1,17 +1,18 @@
 """Manual sliding-window regression test.
 
 Run with:
-    python tests/run_sliding_window_sliding_window.py
+    python tests/run_sliding_window_sliding_window.py [--chunk-duration SECONDS] [--max-chunks COUNT]
 
 This script concatenates the four Surah 2:102 audio fragments located in
 ``assets/surah`` and streams them to the websocket API in a single session.
-It asserts that the server enforces the 11-word minimum window, extends the
-reference window when fewer than 10 words remain, and subsequently slides the
+It asserts that the server enforces the minimum word window (2*max_chunks+1),
+extends the reference window when fewer words remain, and subsequently slides the
 window forward after the first extension.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -53,9 +54,9 @@ SURAH = 2
 AYAH = 102
 SR = 16000
 FRAME_SECS = 0.02
-CHUNK_SECS = 2.0
+DEFAULT_CHUNK_SECS = 2.0
+DEFAULT_MAX_CHUNKS = 5
 FRAME_LEN = int(SR * FRAME_SECS)
-FRAMES_PER_CHUNK = int(SR * CHUNK_SECS) // FRAME_LEN
 
 AUDIO_FILES = [
     Path("assets/surah/002102.mp3"),
@@ -63,6 +64,32 @@ AUDIO_FILES = [
     Path("assets/surah/002104.mp3"),
     Path("assets/surah/002105.mp3"),
 ]
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Manual sliding-window regression test",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python tests/run_sliding_window_sliding_window.py
+  python tests/run_sliding_window_sliding_window.py --chunk-duration 3 --max-chunks 8
+        """
+    )
+    parser.add_argument(
+        "--chunk-duration",
+        type=float,
+        default=DEFAULT_CHUNK_SECS,
+        help=f"Duration of each audio chunk in seconds (default: {DEFAULT_CHUNK_SECS})"
+    )
+    parser.add_argument(
+        "--max-chunks",
+        type=int,
+        default=DEFAULT_MAX_CHUNKS,
+        help=f"Maximum number of chunks in rolling window (default: {DEFAULT_MAX_CHUNKS})"
+    )
+    return parser.parse_args()
 
 
 def _normalize_text(text: str | None) -> str:
@@ -204,11 +231,14 @@ async def _gather_final_messages(ws, inferences: List[Dict[str, Any]]) -> None:
             raise RuntimeError(f"Server returned error: {data}")
 
 
-async def run() -> None:
+async def run(chunk_duration: float, max_chunks: int) -> None:
     if ws_connect is None:  # pragma: no cover
         raise RuntimeError("websocket client unavailable")
     if not _server_is_up():
         raise RuntimeError(f"API server not reachable at {API_BASE}")
+
+    # Calculate frames per chunk based on chunk duration
+    frames_per_chunk = int(SR * chunk_duration) // FRAME_LEN
 
     pcm = _load_audio_stack()
     total_frames = len(pcm) // FRAME_LEN
@@ -221,13 +251,15 @@ async def run() -> None:
         "surah": SURAH,
         "ayah": AYAH,
         "start_word": 0,
-        "num_words": 5,  # expect server to upgrade to MIN_WINDOW_WORDS
+        "num_words": 5,  # expect server to upgrade to minimum window words (2*max_chunks+1)
         "rewaya": "hafs",
         "madd_monfasel_len": 2,
         "madd_mottasel_len": 4,
         "madd_mottasel_waqf": 4,
         "madd_aared_len": 2,
         "sampling_rate": SR,
+        "chunk_duration": chunk_duration,
+        "max_chunks": max_chunks,
     }
 
     inferences: List[Dict[str, Any]] = []
@@ -247,7 +279,7 @@ async def run() -> None:
             await ws.send(frame.tobytes())
             frame_idx += 1
 
-            if frame_idx % FRAMES_PER_CHUNK == 0:
+            if frame_idx % frames_per_chunk == 0:
                 inf = await _recv_until_inference(ws)
                 _record_inference(inf, inferences)
 
@@ -278,8 +310,9 @@ async def run() -> None:
         raise AssertionError("Did not receive any inference messages")
 
     first_words = _normalize_text(inferences[0].get("uthmani")).split()
-    if len(first_words) < 11:
-        raise AssertionError(f"Expected initial window to contain at least 11 words, got {len(first_words)}")
+    expected_min_words = 2 * max_chunks + 1  # Updated formula: 2 * max_chunks + 1
+    if len(first_words) < expected_min_words:
+        raise AssertionError(f"Expected initial window to contain at least {expected_min_words} words, got {len(first_words)}")
 
     extended = False
     slid = False
@@ -323,4 +356,5 @@ async def run() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    args = parse_args()
+    asyncio.run(run(args.chunk_duration, args.max_chunks))

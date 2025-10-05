@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 #      "chunk_duration": <int> (optional, default: 2 seconds),
 #      "max_chunks": <int> (optional, default: 5)
 #    }
-#    Note: min_words = max_chunks + 1, max_words = 2 * max_chunks + 1
+#    Note: Recommended min_words = 2 * max_chunks + 1, max_words = 4 * max_chunks + 1
+#          These are used as defaults when num_words/end_word not specified.
+#          User-specified num_words/end_word will be honored (minimum of min_words applied).
 # 3) Client then streams audio as binary frames only: PCM16LE mono at 16kHz.
 #    The server accumulates samples until a chunk_duration-second chunk is reached.
 # 4) After each new chunk, a rolling window of up to max_chunks is built and
@@ -198,8 +200,8 @@ class SessionState:
         self.lock = asyncio.Lock()
         self.chunk_duration: int = DEFAULT_CHUNK_SECS
         self.max_chunks: int = DEFAULT_MAX_CHUNKS
-        self.min_window_words: int = DEFAULT_MAX_CHUNKS + 1
-        self.max_window_words: int = 2 * DEFAULT_MAX_CHUNKS + 1
+        self.min_window_words: int = 2 * DEFAULT_MAX_CHUNKS + 1
+        self.max_window_words: int = 4 * DEFAULT_MAX_CHUNKS + 1
 
         self.moshaf: Optional[MoshafAttributes] = None
         self.aya_obj: Optional[Aya] = None
@@ -794,8 +796,8 @@ class SessionState:
             raise ValueError("max_chunks must be at least 1")
         
         # Calculate min and max words based on chunk configuration
-        self.min_window_words = self.max_chunks + 1
-        self.max_window_words = 2 * self.max_chunks + 1
+        self.min_window_words = 2 * self.max_chunks + 1
+        self.max_window_words = 4 * self.max_chunks + 1
         
         self.buffer = RollingBuffer(self.sr, chunk_secs=self.chunk_duration, max_chunks=self.max_chunks)
         self.window_extended_once = False
@@ -825,8 +827,8 @@ class SessionState:
         else:
             target_count = self.min_window_words
 
-        # Clamp target_count to valid range
-        target_count = max(self.min_window_words, min(target_count, self.max_window_words))
+        # Ensure at least the minimum window size
+        target_count = max(target_count, self.min_window_words)
         min_initial_window = target_count
 
         self._ensure_window_capacity(start_word, min_initial_window)

@@ -5,9 +5,9 @@ Run with:
 
 This script concatenates the seven Surah 1 audio fragments located in
 ``assets/fatihah`` and streams them to the websocket API in a single session.
-It asserts that the server enforces the 11-word minimum window, extends the
-reference window when fewer than 10 words remain, slides the window forward
-after the first extension, and reaches the closing ayah.
+It asserts that the server enforces the minimum window size (2*max_chunks + 1),
+extends the reference window when fewer than 10 words remain, slides the window
+forward after the first extension, and reaches the closing ayah.
 """
 
 from __future__ import annotations
@@ -246,7 +246,7 @@ async def run() -> None:
         "surah": SURAH,
         "ayah": START_AYAH,
         "start_word": 0,
-        "num_words": 5,  # expect server to upgrade to MIN_WINDOW_WORDS
+        "num_words": 5,  # expect server to upgrade to min_window_words (max_chunks + 1)
         "rewaya": "hafs",
         "madd_monfasel_len": 2,
         "madd_mottasel_len": 4,
@@ -303,8 +303,10 @@ async def run() -> None:
         raise AssertionError("Did not receive any inference messages")
 
     first_words = _normalize_text(inferences[0].get("uthmani")).split()
-    if len(first_words) < 11:
-        raise AssertionError(f"Expected initial window to contain at least 11 words, got {len(first_words)}")
+    # With default max_chunks=5, minimum is 11 words (2*max_chunks + 1)
+    expected_min = ready.get("min_window_words", 11)
+    if len(first_words) < expected_min:
+        raise AssertionError(f"Expected initial window to contain at least {expected_min} words, got {len(first_words)}")
 
     extended = False
     slid = False
