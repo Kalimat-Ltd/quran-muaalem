@@ -31,11 +31,14 @@ logger = logging.getLogger(__name__)
 #      "end_word" | "num_words": <int>,
 #      "rewaya": "hafs",
 #      ...madd settings...,
-#      "sampling_rate": 16000
+#      "sampling_rate": 16000,
+#      "chunk_duration": <int> (optional, default: 2 seconds),
+#      "max_chunks": <int> (optional, default: 5)
 #    }
+#    Note: min_words = max_chunks + 1, max_words = 2 * max_chunks + 1
 # 3) Client then streams audio as binary frames only: PCM16LE mono at 16kHz.
-#    The server accumulates samples until a 2-second chunk (32000 samples) is reached.
-# 4) After each new 2s chunk, a rolling window of up to 5 chunks (10s) is built and
+#    The server accumulates samples until a chunk_duration-second chunk is reached.
+# 4) After each new chunk, a rolling window of up to max_chunks is built and
 #    inference is run. The server replies with a JSON message:
 #    {
 #       "type":"inference",
@@ -47,9 +50,9 @@ logger = logging.getLogger(__name__)
 #    }
 # 5) Control messages: {"type":"end"}, {"type":"reset"}, {"type":"ping"}
 
-CHUNK_SECS = 2
+DEFAULT_CHUNK_SECS = 2
 DEFAULT_SR = 16000
-MAX_CHUNKS = 5
+DEFAULT_MAX_CHUNKS = 5
 AUDIO_FORMAT = "pcm16le"  # fixed wire format for binary frames
 
 
@@ -119,7 +122,7 @@ def _to_serializable(obj: Any) -> Any:
 
 
 class RollingBuffer:
-    def __init__(self, sampling_rate: int, chunk_secs: int = CHUNK_SECS, max_chunks: int = MAX_CHUNKS):
+    def __init__(self, sampling_rate: int, chunk_secs: int = DEFAULT_CHUNK_SECS, max_chunks: int = DEFAULT_MAX_CHUNKS):
         self.sr = sampling_rate
         self.chunk_size = sampling_rate * chunk_secs
         self.max_chunks = max_chunks
@@ -179,7 +182,6 @@ class RollingBuffer:
 
 
 class SessionState:
-    MIN_WINDOW_WORDS = 11
     REMAINING_THRESHOLD = 10
     SHIFT_SIZE = 10
     WORD_MATCH_RATIO = 0.7
@@ -194,6 +196,10 @@ class SessionState:
         self.phonetizer_out = None
         self.buffer = RollingBuffer(self.sr)
         self.lock = asyncio.Lock()
+        self.chunk_duration: int = DEFAULT_CHUNK_SECS
+        self.max_chunks: int = DEFAULT_MAX_CHUNKS
+        self.min_window_words: int = DEFAULT_MAX_CHUNKS + 1
+        self.max_window_words: int = 2 * DEFAULT_MAX_CHUNKS + 1
 
         self.moshaf: Optional[MoshafAttributes] = None
         self.aya_obj: Optional[Aya] = None
@@ -776,7 +782,22 @@ class SessionState:
         if requested_sr != DEFAULT_SR:
             raise ValueError(f"sampling_rate must be {DEFAULT_SR}")
         self.sr = DEFAULT_SR
-        self.buffer = RollingBuffer(self.sr)
+        
+        # Get chunk configuration
+        self.chunk_duration = int(cfg.get("chunk_duration", DEFAULT_CHUNK_SECS))
+        self.max_chunks = int(cfg.get("max_chunks", DEFAULT_MAX_CHUNKS))
+        
+        # Validate chunk parameters
+        if self.chunk_duration < 1:
+            raise ValueError("chunk_duration must be at least 1 second")
+        if self.max_chunks < 1:
+            raise ValueError("max_chunks must be at least 1")
+        
+        # Calculate min and max words based on chunk configuration
+        self.min_window_words = self.max_chunks + 1
+        self.max_window_words = 2 * self.max_chunks + 1
+        
+        self.buffer = RollingBuffer(self.sr, chunk_secs=self.chunk_duration, max_chunks=self.max_chunks)
         self.window_extended_once = False
 
         surah = int(cfg["surah"])  # required
@@ -802,10 +823,11 @@ class SessionState:
         elif num_words is not None:
             target_count = num_words
         else:
-            target_count = self.MIN_WINDOW_WORDS
+            target_count = self.min_window_words
 
-        target_count = max(target_count, 1)
-        min_initial_window = max(target_count, self.MIN_WINDOW_WORDS)
+        # Clamp target_count to valid range
+        target_count = max(self.min_window_words, min(target_count, self.max_window_words))
+        min_initial_window = target_count
 
         self._ensure_window_capacity(start_word, min_initial_window)
 
@@ -826,7 +848,7 @@ class SessionState:
             start_word = 1
             available_from_start = total_words
 
-        desired_count = min(max(target_count, self.MIN_WINDOW_WORDS), available_from_start)
+        desired_count = min(max(target_count, self.min_window_words), available_from_start)
 
         try:
             self._set_reference_window(start_word, desired_count)
@@ -1017,7 +1039,15 @@ async def ws_endpoint(ws: WebSocket):
             await ws.close(code=1002)
             return
         session.configure(cfg)
-        await ws.send_text(json.dumps({"type": "ready", "sampling_rate": session.sr, "audio_format": AUDIO_FORMAT}))
+        await ws.send_text(json.dumps({
+            "type": "ready",
+            "sampling_rate": session.sr,
+            "audio_format": AUDIO_FORMAT,
+            "chunk_duration": session.chunk_duration,
+            "max_chunks": session.max_chunks,
+            "min_window_words": session.min_window_words,
+            "max_window_words": session.max_window_words
+        }))
 
         while True:
             msg = await ws.receive()
