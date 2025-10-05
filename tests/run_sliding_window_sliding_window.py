@@ -1,7 +1,7 @@
 """Manual sliding-window regression test.
 
 Run with:
-    python tests/run_sliding_window_sliding_window.py [--chunk-duration SECONDS] [--max-chunks COUNT]
+    python tests/run_sliding_window_sliding_window.py [--chunk-duration MILLISECONDS] [--max-chunks COUNT]
 
 This script concatenates the four Surah 2:102 audio fragments located in
 ``assets/surah`` and streams them to the websocket API in a single session.
@@ -54,7 +54,7 @@ SURAH = 2
 AYAH = 102
 SR = 16000
 FRAME_SECS = 0.02
-DEFAULT_CHUNK_SECS = 2.0
+DEFAULT_CHUNK_MS = 2000
 DEFAULT_MAX_CHUNKS = 5
 FRAME_LEN = int(SR * FRAME_SECS)
 
@@ -74,14 +74,14 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 Examples:
   python tests/run_sliding_window_sliding_window.py
-  python tests/run_sliding_window_sliding_window.py --chunk-duration 3 --max-chunks 8
+  python tests/run_sliding_window_sliding_window.py --chunk-duration 3000 --max-chunks 8
         """
     )
     parser.add_argument(
         "--chunk-duration",
-        type=float,
-        default=DEFAULT_CHUNK_SECS,
-        help=f"Duration of each audio chunk in seconds (default: {DEFAULT_CHUNK_SECS})"
+        type=int,
+        default=DEFAULT_CHUNK_MS,
+        help=f"Duration of each audio chunk in milliseconds (default: {DEFAULT_CHUNK_MS})"
     )
     parser.add_argument(
         "--max-chunks",
@@ -231,14 +231,15 @@ async def _gather_final_messages(ws, inferences: List[Dict[str, Any]]) -> None:
             raise RuntimeError(f"Server returned error: {data}")
 
 
-async def run(chunk_duration: float, max_chunks: int) -> None:
+async def run(chunk_duration_ms: int, max_chunks: int) -> None:
     if ws_connect is None:  # pragma: no cover
         raise RuntimeError("websocket client unavailable")
     if not _server_is_up():
         raise RuntimeError(f"API server not reachable at {API_BASE}")
 
-    # Calculate frames per chunk based on chunk duration
-    frames_per_chunk = int(SR * chunk_duration) // FRAME_LEN
+    # Calculate frames per chunk based on chunk duration in milliseconds
+    chunk_duration_secs = chunk_duration_ms / 1000.0
+    frames_per_chunk = int(SR * chunk_duration_secs) // FRAME_LEN
 
     pcm = _load_audio_stack()
     total_frames = len(pcm) // FRAME_LEN
@@ -258,7 +259,7 @@ async def run(chunk_duration: float, max_chunks: int) -> None:
         "madd_mottasel_waqf": 4,
         "madd_aared_len": 2,
         "sampling_rate": SR,
-        "chunk_duration": chunk_duration,
+        "chunk_duration": chunk_duration_ms,
         "max_chunks": max_chunks,
     }
 

@@ -32,14 +32,14 @@ logger = logging.getLogger(__name__)
 #      "rewaya": "hafs",
 #      ...madd settings...,
 #      "sampling_rate": 16000,
-#      "chunk_duration": <int> (optional, default: 2 seconds),
+#      "chunk_duration": <int> (optional, default: 2000 ms),
 #      "max_chunks": <int> (optional, default: 5)
 #    }
 #    Note: Recommended min_words = 2 * max_chunks + 1, max_words = 4 * max_chunks + 1
 #          These are used as defaults when num_words/end_word not specified.
 #          User-specified num_words/end_word will be honored (minimum of min_words applied).
 # 3) Client then streams audio as binary frames only: PCM16LE mono at 16kHz.
-#    The server accumulates samples until a chunk_duration-second chunk is reached.
+#    The server accumulates samples until a chunk_duration-millisecond chunk is reached.
 # 4) After each new chunk, a rolling window of up to max_chunks is built and
 #    inference is run. The server replies with a JSON message:
 #    {
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 #    }
 # 5) Control messages: {"type":"end"}, {"type":"reset"}, {"type":"ping"}
 
-DEFAULT_CHUNK_SECS = 2
+DEFAULT_CHUNK_MS = 2000
 DEFAULT_SR = 16000
 DEFAULT_MAX_CHUNKS = 5
 AUDIO_FORMAT = "pcm16le"  # fixed wire format for binary frames
@@ -124,9 +124,10 @@ def _to_serializable(obj: Any) -> Any:
 
 
 class RollingBuffer:
-    def __init__(self, sampling_rate: int, chunk_secs: int = DEFAULT_CHUNK_SECS, max_chunks: int = DEFAULT_MAX_CHUNKS):
+    def __init__(self, sampling_rate: int, chunk_ms: int = DEFAULT_CHUNK_MS, max_chunks: int = DEFAULT_MAX_CHUNKS):
+        chunk_secs = chunk_ms / 1000.0  # Convert milliseconds to seconds
         self.sr = sampling_rate
-        self.chunk_size = sampling_rate * chunk_secs
+        self.chunk_size = int(sampling_rate * chunk_secs)
         self.max_chunks = max_chunks
         self._chunks: Deque[np.ndarray] = deque(maxlen=max_chunks)
         self._staging: List[float] = []  # accumulate until reaching chunk_size
@@ -198,7 +199,7 @@ class SessionState:
         self.phonetizer_out = None
         self.buffer = RollingBuffer(self.sr)
         self.lock = asyncio.Lock()
-        self.chunk_duration: int = DEFAULT_CHUNK_SECS
+        self.chunk_duration: int = DEFAULT_CHUNK_MS
         self.max_chunks: int = DEFAULT_MAX_CHUNKS
         self.min_window_words: int = 2 * DEFAULT_MAX_CHUNKS + 1
         self.max_window_words: int = 4 * DEFAULT_MAX_CHUNKS + 1
@@ -786,12 +787,12 @@ class SessionState:
         self.sr = DEFAULT_SR
         
         # Get chunk configuration
-        self.chunk_duration = int(cfg.get("chunk_duration", DEFAULT_CHUNK_SECS))
+        self.chunk_duration = int(cfg.get("chunk_duration", DEFAULT_CHUNK_MS))
         self.max_chunks = int(cfg.get("max_chunks", DEFAULT_MAX_CHUNKS))
         
         # Validate chunk parameters
-        if self.chunk_duration < 1:
-            raise ValueError("chunk_duration must be at least 1 second")
+        if self.chunk_duration < 100:  # Minimum 100ms
+            raise ValueError("chunk_duration must be at least 100 milliseconds")
         if self.max_chunks < 1:
             raise ValueError("max_chunks must be at least 1")
         
@@ -799,7 +800,7 @@ class SessionState:
         self.min_window_words = 2 * self.max_chunks + 1
         self.max_window_words = 4 * self.max_chunks + 1
         
-        self.buffer = RollingBuffer(self.sr, chunk_secs=self.chunk_duration, max_chunks=self.max_chunks)
+        self.buffer = RollingBuffer(self.sr, chunk_ms=self.chunk_duration, max_chunks=self.max_chunks)
         self.window_extended_once = False
 
         surah = int(cfg["surah"])  # required
