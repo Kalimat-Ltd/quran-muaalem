@@ -197,7 +197,6 @@ class SessionState:
         self.sr = DEFAULT_SR
         self.aya_ref_text: Optional[str] = None
         self.phonetizer_out = None
-        self.phonetizer_out_for_user = None
         self.buffer = RollingBuffer(self.sr)
         self.lock = asyncio.Lock()
         self.chunk_duration: int = DEFAULT_CHUNK_MS
@@ -221,7 +220,6 @@ class SessionState:
         self.full_word_char_offsets: List[int] = []
         self.full_char_to_word_map: Dict[int, int] = {}
         self.full_phonetizer_out = None
-        self.full_phonetizer_out_for_user = None
         self._full_phoneme_prefix: List[int] = [0]
         self._window_word_char_offsets: List[int] = []
         self._window_global_char_indices: Dict[int, int] = {}
@@ -276,7 +274,6 @@ class SessionState:
     def _prepare_full_reference(self) -> None:
         self.full_char_to_word_map = {}
         self.full_phonetizer_out = None
-        self.full_phonetizer_out_for_user = None
         self._full_phoneme_prefix = [0]
 
         if not self.full_aya_words or self.moshaf is None:
@@ -291,11 +288,6 @@ class SessionState:
         except Exception:
             self.full_phonetizer_out = None
             return
-
-        try:
-            self.full_phonetizer_out_for_user = quran_phonetizer(full_text, self.moshaf, remove_spaces=False)
-        except Exception:
-            self.full_phonetizer_out_for_user = None
 
         phonemes = getattr(self.full_phonetizer_out, "phonemes", "")
         char_map = getattr(self.full_phonetizer_out, "char_map", [])
@@ -385,16 +377,7 @@ class SessionState:
             normalized_text = " ".join(words)
 
         self.aya_ref_text = normalized_text
-        try:
-            self.phonetizer_out = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True)
-        except Exception as exc:
-            logger.error("quran_phonetizer failed for window text", exc_info=exc)
-            self.phonetizer_out = None
-        try:
-            self.phonetizer_out_for_user = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=False)
-        except Exception as exc:
-            logger.error("quran_phonetizer failed for user window text", exc_info=exc)
-            self.phonetizer_out_for_user = None
+        self.phonetizer_out = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True)
         self.char_to_word_map = self._build_char_to_word_map(normalized_text)
         self.current_window_start_word = start_idx + 1
         self.current_window_word_count = len(words)
@@ -445,16 +428,6 @@ class SessionState:
         if self.phonetizer_out is None:
             return ""
         phonemes = getattr(self.phonetizer_out, "phonemes", "")
-        if isinstance(phonemes, str):
-            return phonemes
-        return getattr(phonemes, "text", "") or ""
-
-    def _reference_phoneme_text_for_user(self) -> str:
-        if self.phonetizer_out_for_user is None:
-            return ""
-        phonemes = getattr(self.phonetizer_out_for_user, "phonemes", "")
-        test = quran_phonetizer("وقال إِنَّمَا يَتَذَكَّرُ أُولُو الْأَلْبَابِ", self.moshaf, remove_spaces=True)
-        print(test.phonemes)
         if isinstance(phonemes, str):
             return phonemes
         return getattr(phonemes, "text", "") or ""
@@ -1128,7 +1101,7 @@ async def ws_endpoint(ws: WebSocket):
                                     if session.phonetizer_out is not None:
                                         ph_payload = {
                                             "phonemes": {
-                                                "text": session._reference_phoneme_text_for_user(),
+                                                "text": session._reference_phoneme_text(),
                                             },
                                             "sifat": [
                                                 _to_serializable(s)
@@ -1209,7 +1182,7 @@ async def ws_endpoint(ws: WebSocket):
                 if current_phonetizer is not None:
                     ph_payload = {
                         "phonemes": {
-                            "text": session._reference_phoneme_text_for_user(),
+                            "text": session._reference_phoneme_text(),
                         },
                         "sifat": [
                             _to_serializable(s)
