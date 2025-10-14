@@ -17,6 +17,9 @@ from fastapi.staticfiles import StaticFiles
 from quran_muaalem import Muaalem, MuaalemOutput
 from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
 import diff_match_patch as dmp
+import sys
+from pathlib import Path
+from fix_word_endings import WaqfProcessor, PhonemeProcessor, PhonemeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +200,7 @@ class SessionState:
         self.sr = DEFAULT_SR
         self.aya_ref_text: Optional[str] = None
         self.phonetizer_out = None
+        self.phonetizer_out_for_user = None
         self.buffer = RollingBuffer(self.sr)
         self.lock = asyncio.Lock()
         self.chunk_duration: int = DEFAULT_CHUNK_MS
@@ -235,6 +239,55 @@ class SessionState:
     @staticmethod
     def _normalize_uthmani_text(text: str) -> str:
         return " ".join(text.split())
+    
+    @staticmethod
+    def _process_waqf_phonemes(
+        uthmani_text: str,
+        moshaf: MoshafAttributes,
+        first_prev_word: Optional[str] = None,
+    ) -> tuple[str, str]:
+        """Process uthmani text word by word through Waqf rules and return adjusted phonemes.
+
+        When processing inside an active session window, you can provide
+        'first_prev_word' to carry over the previous global word for the
+        first word in the window (index 0). For standalone calls (e.g. /phonetize),
+        omit it and the function will consider the first word without carryover.
+        """
+
+        words = uthmani_text.split()
+
+        waqf_processor = WaqfProcessor()
+        phoneme_processor = PhonemeProcessor(PhonemeConfig())
+
+        waqf_phoneme_results: List[str] = []
+        waqf_wsl_results: List[str] = []
+        prev_word_local = ""
+        for i, word in enumerate(words):
+            try:
+                # Use carryover previous word for index 0 if provided, otherwise normal previous in-window word
+                if i == 0:
+                    prev_word_local = (first_prev_word or "").strip()
+                else:
+                    prev_word_local = words[i - 1]
+
+                # Apply Waqf rules to get the Waqf form of the word
+                waqf_result = waqf_processor.apply_waqf_rules(word)
+                waqf_wsl_result = waqf_processor.apply_waqf_rules(prev_word_local + " " + word)
+    
+                phoneme_word = quran_phonetizer(waqf_result.waqf.strip(), moshaf, remove_spaces=True).phonemes
+                waqf_wsl_phonemes = quran_phonetizer(waqf_wsl_result.waqf.strip(), moshaf, remove_spaces=False).phonemes
+                # Process the phoneme string according to Waqf rules
+                adjusted_phoneme = phoneme_processor.process(phoneme_word, waqf_result.waqf.strip())
+                waqf_phoneme_results.append(adjusted_phoneme)
+
+                waqf_wsl_adjusted_phoneme = phoneme_processor.process(waqf_wsl_phonemes, waqf_wsl_result.waqf.strip())
+                # Take only the current word's phonemes
+                waqf_wsl_adjusted_phoneme = waqf_wsl_adjusted_phoneme.split()[-1]
+                waqf_wsl_results.append(waqf_wsl_adjusted_phoneme)
+            except Exception as e:
+                print(f"Warning: Failed to process Waqf for word '{word}': {e}")
+
+        return " ".join(waqf_phoneme_results), " ".join(waqf_wsl_results)
 
     @staticmethod
     def _build_char_to_word_map(text: str) -> Dict[int, int]:
@@ -377,7 +430,27 @@ class SessionState:
             normalized_text = " ".join(words)
 
         self.aya_ref_text = normalized_text
-        self.phonetizer_out = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True)
+        try:
+            self.phonetizer_out = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True)
+            # Process waqf phonemes for phonetizer_out
+            if self.phonetizer_out:
+                phonemes_text = getattr(self.phonetizer_out, "phonemes", "")
+                if isinstance(phonemes_text, str):
+                    # If this is an active window inside a session and there exists a previous global word,
+                    # pass it to the waqf processing so index 0 can be adjusted using carryover.
+                    prev_global_word: Optional[str] = None
+                    if start_idx > 0 and start_idx <= len(self.full_aya_words) - 1:
+                        prev_global_word = self.full_aya_words[start_idx - 1]
+
+                    waqf_phonemes, waqf_wsl_phonemes = self._process_waqf_phonemes(
+                        normalized_text, self.moshaf, first_prev_word=prev_global_word
+                    )
+                    # Store as attribute on phonetizer_out
+                    self.phonetizer_out.waqf_phonemes = waqf_phonemes
+                    self.phonetizer_out.waqf_wsl_phonemes = waqf_wsl_phonemes
+        except Exception as exc:
+            logger.error("quran_phonetizer failed for window text", exc_info=exc)
+            self.phonetizer_out = None
         self.char_to_word_map = self._build_char_to_word_map(normalized_text)
         self.current_window_start_word = start_idx + 1
         self.current_window_word_count = len(words)
@@ -813,10 +886,10 @@ class SessionState:
 
         self.moshaf = MoshafAttributes(
             rewaya=cfg.get("rewaya", "hafs"),
-            madd_monfasel_len=int(cfg.get("madd_monfasel_len", 2)),
+            madd_monfasel_len=int(cfg.get("madd_monfasel_len", 4)),
             madd_mottasel_len=int(cfg.get("madd_mottasel_len", 4)),
             madd_mottasel_waqf=int(cfg.get("madd_mottasel_waqf", 4)),
-            madd_aared_len=int(cfg.get("madd_aared_len", 2)),
+            madd_aared_len=int(cfg.get("madd_aared_len", 4)),
         )
 
         self._load_ayah(surah, ayah)
@@ -1027,6 +1100,51 @@ async def health() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+@app.post("/phonetize")
+async def phonetize(request: Dict[str, Any]) -> JSONResponse:
+    text = request.get("text")
+    if not text or not isinstance(text, str):
+        return JSONResponse({"error": "Valid 'text' string required"}, status_code=400)
+    
+    # Normalize the text (remove extra spaces)
+    text = " ".join(text.split())
+    
+    moshaf = MoshafAttributes(
+        rewaya=request.get("rewaya", "hafs"),
+        madd_monfasel_len=int(request.get("madd_monfasel_len", 4)),
+        madd_mottasel_len=int(request.get("madd_mottasel_len", 4)),
+        madd_mottasel_waqf=int(request.get("madd_mottasel_waqf", 4)),
+        madd_aared_len=int(request.get("madd_aared_len", 4)),
+    )
+    
+    try:
+        phonetizer_out = quran_phonetizer(text, moshaf, remove_spaces=False)
+        print(f"DEBUG: phonetizer_out = {phonetizer_out}")
+        print(f"DEBUG: type(phonetizer_out) = {type(phonetizer_out)}")
+        phonemes_text = getattr(phonetizer_out, "phonemes", "")
+        print(f"DEBUG: phonemes_text = {repr(phonemes_text)}")
+        print(f"DEBUG: type(phonemes_text) = {type(phonemes_text)}")
+        if hasattr(phonemes_text, "text"):
+            phonemes_text = phonemes_text.text
+            print(f"DEBUG: phonemes_text after .text = {repr(phonemes_text)}")
+        
+        # Process waqf phonemes
+        waqf_phonemes, waqf_wsl_phonemes = SessionState._process_waqf_phonemes(phonemes_text, moshaf)
+        print(f"DEBUG: waqf_phonemes = {repr(waqf_phonemes)}")
+        print(f"DEBUG: waqf_wsl_phonemes = {repr(waqf_wsl_phonemes)}")
+
+        return JSONResponse({
+            "phonemes": phonemes_text,
+            "waqf_phonemes": waqf_phonemes,
+            "waqf_wsl_phonemes": waqf_wsl_phonemes
+        })
+    except Exception as e:
+        print(f"DEBUG: Exception = {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Phonetization failed: {str(e)}"}, status_code=500)
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
@@ -1103,6 +1221,8 @@ async def ws_endpoint(ws: WebSocket):
                                             "phonemes": {
                                                 "text": session._reference_phoneme_text(),
                                             },
+                                            "waqf_phonemes": getattr(session.phonetizer_out, "waqf_phonemes", ""),
+                                            "waqf_wsl_phonemes": getattr(session.phonetizer_out, "waqf_wsl_phonemes", ""),
                                             "sifat": [
                                                 _to_serializable(s)
                                                 for s in getattr(session.phonetizer_out, "sifat", [])
@@ -1184,6 +1304,8 @@ async def ws_endpoint(ws: WebSocket):
                         "phonemes": {
                             "text": session._reference_phoneme_text(),
                         },
+                        "waqf_phonemes": getattr(session.phonetizer_out, "waqf_phonemes", ""),
+                        "waqf_wsl_phonemes": getattr(session.phonetizer_out, "waqf_wsl_phonemes", ""),
                         "sifat": [
                             _to_serializable(s)
                             for s in getattr(current_phonetizer, "sifat", [])
