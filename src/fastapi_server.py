@@ -432,6 +432,7 @@ class SessionState:
         self.aya_ref_text = normalized_text
         try:
             self.phonetizer_out = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True)
+            temp_spaced_phonemes = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True).phonemes
             # Process waqf phonemes for phonetizer_out
             if self.phonetizer_out:
                 phonemes_text = getattr(self.phonetizer_out, "phonemes", "")
@@ -448,6 +449,7 @@ class SessionState:
                     # Store as attribute on phonetizer_out
                     self.phonetizer_out.waqf_phonemes = waqf_phonemes
                     self.phonetizer_out.waqf_wsl_phonemes = waqf_wsl_phonemes
+                    self.phonetizer_out.spaced_phonemes = temp_spaced_phonemes
         except Exception as exc:
             logger.error("quran_phonetizer failed for window text", exc_info=exc)
             self.phonetizer_out = None
