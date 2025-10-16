@@ -261,7 +261,9 @@ class SessionState:
 
         waqf_phoneme_results: List[str] = []
         wasl_waqf_results: List[str] = []
+        waqf_wasl_results: List[str] = []
         prev_word_local = ""
+        next_word_local = ""
         for i, word in enumerate(words):
             try:
                 # Use carryover previous word for index 0 if provided, otherwise normal previous in-window word
@@ -270,12 +272,17 @@ class SessionState:
                 else:
                     prev_word_local = words[i - 1]
 
+                next_word_local = words[i + 1] if i + 1 < len(words) else words[0]
+
                 # Apply Waqf rules to get the Waqf form of the word
                 waqf_result = waqf_processor.apply_waqf_rules(word)
                 wasl_waqf_result = waqf_processor.apply_waqf_rules(prev_word_local + " " + word)
+                waqf_wasl_result = waqf_processor.apply_waqf_rules(word + " " + next_word_local)
     
                 phoneme_word = quran_phonetizer(waqf_result.waqf.strip(), moshaf, remove_spaces=True).phonemes
                 wasl_waqf_phonemes = quran_phonetizer(wasl_waqf_result.waqf.strip(), moshaf, remove_spaces=False).phonemes
+                waqf_wasl_phonemes = quran_phonetizer(waqf_wasl_result.waqf.strip(), moshaf, remove_spaces=False).phonemes
+
                 # Process the phoneme string according to Waqf rules
                 adjusted_phoneme = phoneme_processor.process(phoneme_word, waqf_result.waqf.strip())
                 waqf_phoneme_results.append(adjusted_phoneme)
@@ -284,10 +291,14 @@ class SessionState:
                 # Take only the current word's phonemes
                 wasl_waqf_adjusted_phoneme = wasl_waqf_adjusted_phoneme.split()[-1]
                 wasl_waqf_results.append(wasl_waqf_adjusted_phoneme)
+
+                waqf_wasl_adjusted_phoneme = phoneme_processor.process(waqf_wasl_phonemes, waqf_wasl_result.waqf.strip())
+                waqf_wasl_adjusted_phoneme = waqf_wasl_adjusted_phoneme.split()[0]
+                waqf_wasl_results.append(waqf_wasl_adjusted_phoneme)
             except Exception as e:
                 print(f"Warning: Failed to process Waqf for word '{word}': {e}")
 
-        return " ".join(waqf_phoneme_results), " ".join(wasl_waqf_results)
+        return " ".join(waqf_phoneme_results), " ".join(wasl_waqf_results), " ".join(waqf_wasl_results)
 
     @staticmethod
     def _build_char_to_word_map(text: str) -> Dict[int, int]:
@@ -443,12 +454,13 @@ class SessionState:
                     if start_idx > 0 and start_idx <= len(self.full_aya_words) - 1:
                         prev_global_word = self.full_aya_words[start_idx - 1]
 
-                    waqf_phonemes, wasl_waqf_phonemes = self._process_waqf_phonemes(
+                    waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = self._process_waqf_phonemes(
                         normalized_text, self.moshaf, first_prev_word=prev_global_word
                     )
                     # Store as attribute on phonetizer_out
                     self.phonetizer_out.waqf_phonemes = waqf_phonemes
                     self.phonetizer_out.wasl_waqf_phonemes = wasl_waqf_phonemes
+                    self.phonetizer_out.waqf_wasl_phonemes = waqf_wasl_phonemes
                     self.phonetizer_out.spaced_phonemes = temp_spaced_phonemes
         except Exception as exc:
             logger.error("quran_phonetizer failed for window text", exc_info=exc)
@@ -1129,16 +1141,18 @@ async def phonetize(request: Dict[str, Any]) -> JSONResponse:
         if hasattr(phonemes_text, "text"):
             phonemes_text = phonemes_text.text
             print(f"DEBUG: phonemes_text after .text = {repr(phonemes_text)}")
-        
+
         # Process waqf phonemes
-        waqf_phonemes, wasl_waqf_phonemes = SessionState._process_waqf_phonemes(phonemes_text, moshaf)
+        waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = SessionState._process_waqf_phonemes(phonemes_text, moshaf)
         print(f"DEBUG: waqf_phonemes = {repr(waqf_phonemes)}")
         print(f"DEBUG: wasl_waqf_phonemes = {repr(wasl_waqf_phonemes)}")
+        print(f"DEBUG: waqf_wasl_phonemes = {repr(waqf_wasl_phonemes)}")
 
         return JSONResponse({
             "phonemes": phonemes_text,
             "waqf_phonemes": waqf_phonemes,
-            "wasl_waqf_phonemes": wasl_waqf_phonemes
+            "wasl_waqf_phonemes": wasl_waqf_phonemes,
+            "waqf_wasl_phonemes": waqf_wasl_phonemes
         })
     except Exception as e:
         print(f"DEBUG: Exception = {e}")
