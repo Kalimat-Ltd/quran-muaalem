@@ -3,7 +3,7 @@ import requests
 def test_phonetize():
     url = "http://localhost:8000/phonetize"
     payload = {
-        "text": "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
+        "text": "إِنَّآ أَنزَلْنَـٰهُ قُرْءَٰنًا عَرَبِيًّۭا لَّعَلَّكُمْ تَعْقِلُونَ نَحْنُ نَقُصُّ عَلَيْكَ أَحْسَنَ ٱلْقَصَصِ بِمَآ أَوْحَيْنَآ إِلَيْكَ هَـٰذَا ٱلْقُرْءَانَ وَإِن كُنتَ مِن قَبْلِهِۦ لَمِنَ ٱلْغَـٰفِلِينَ "
     }
     response = requests.post(url, json=payload)
     print("Status code:", response.status_code)
@@ -13,8 +13,10 @@ def test_phonetize():
         assert "phonemes" in data
         assert "waqf_phonemes" in data
         print("Phonemes:", repr(data["phonemes"]))
+        print("Segmented Phonemes:", repr(data["segmented_phonemes"]))
         print("Waqf Phonemes:", repr(data["waqf_phonemes"]))
-        print("Waqf WSL Phonemes:", repr(data["waqf_wsl_phonemes"]))
+        print("Waqf Wasl Phonemes:", repr(data["waqf_wasl_phonemes"]))
+        print("Wasl Waqf Phonemes:", repr(data["wasl_waqf_phonemes"]))
 
     else:
         print("Failed with status", response.status_code)

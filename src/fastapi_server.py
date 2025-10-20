@@ -20,6 +20,7 @@ import diff_match_patch as dmp
 import sys
 from pathlib import Path
 from fix_word_endings import WaqfProcessor, PhonemeProcessor, PhonemeConfig
+from segment_phonemes import segment_phonemes
 
 logger = logging.getLogger(__name__)
 
@@ -288,11 +289,12 @@ class SessionState:
                 waqf_phoneme_results.append(adjusted_phoneme)
 
                 wasl_waqf_adjusted_phoneme = phoneme_processor.process(wasl_waqf_phonemes, wasl_waqf_result.waqf.strip())
-                # Take only the current word's phonemes
+                wasl_waqf_adjusted_phoneme = segment_phonemes(wasl_waqf_adjusted_phoneme, f"{prev_word_local} {word}") if len(wasl_waqf_adjusted_phoneme.split()) == 1 else wasl_waqf_adjusted_phoneme
                 wasl_waqf_adjusted_phoneme = wasl_waqf_adjusted_phoneme.split()[-1]
                 wasl_waqf_results.append(wasl_waqf_adjusted_phoneme)
 
                 waqf_wasl_adjusted_phoneme = phoneme_processor.process(waqf_wasl_phonemes, waqf_wasl_result.waqf.strip())
+                waqf_wasl_adjusted_phoneme = segment_phonemes(waqf_wasl_adjusted_phoneme, f"{word} {next_word_local}") if len(waqf_wasl_adjusted_phoneme.split()) == 1 else waqf_wasl_adjusted_phoneme
                 waqf_wasl_adjusted_phoneme = waqf_wasl_adjusted_phoneme.split()[0]
                 waqf_wasl_results.append(waqf_wasl_adjusted_phoneme)
             except Exception as e:
@@ -443,7 +445,7 @@ class SessionState:
         self.aya_ref_text = normalized_text
         try:
             self.phonetizer_out = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True)
-            temp_spaced_phonemes = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True).phonemes
+            temp_spaced_phonemes = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=False).phonemes
             # Process waqf phonemes for phonetizer_out
             if self.phonetizer_out:
                 phonemes_text = getattr(self.phonetizer_out, "phonemes", "")
@@ -461,7 +463,7 @@ class SessionState:
                     self.phonetizer_out.waqf_phonemes = waqf_phonemes
                     self.phonetizer_out.wasl_waqf_phonemes = wasl_waqf_phonemes
                     self.phonetizer_out.waqf_wasl_phonemes = waqf_wasl_phonemes
-                    self.phonetizer_out.spaced_phonemes = temp_spaced_phonemes
+                    self.phonetizer_out.spaced_phonemes, self.phonetizer_out.char_map = segment_phonemes(temp_spaced_phonemes, normalized_text, collect_mapping=True)
         except Exception as exc:
             logger.error("quran_phonetizer failed for window text", exc_info=exc)
             self.phonetizer_out = None
@@ -1135,7 +1137,6 @@ async def phonetize(request: Dict[str, Any]) -> JSONResponse:
         phonetizer_out = quran_phonetizer(text, moshaf, remove_spaces=False)
         print(f"DEBUG: phonetizer_out = {phonetizer_out}")
         print(f"DEBUG: type(phonetizer_out) = {type(phonetizer_out)}")
-        phonemes_text = getattr(phonetizer_out, "phonemes", "")
         print(f"DEBUG: phonemes_text = {repr(phonemes_text)}")
         print(f"DEBUG: type(phonemes_text) = {type(phonemes_text)}")
         if hasattr(phonemes_text, "text"):
@@ -1143,16 +1144,17 @@ async def phonetize(request: Dict[str, Any]) -> JSONResponse:
             print(f"DEBUG: phonemes_text after .text = {repr(phonemes_text)}")
 
         # Process waqf phonemes
-        waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = SessionState._process_waqf_phonemes(phonemes_text, moshaf)
+        waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = SessionState._process_waqf_phonemes(text, moshaf)
         print(f"DEBUG: waqf_phonemes = {repr(waqf_phonemes)}")
         print(f"DEBUG: wasl_waqf_phonemes = {repr(wasl_waqf_phonemes)}")
         print(f"DEBUG: waqf_wasl_phonemes = {repr(waqf_wasl_phonemes)}")
 
         return JSONResponse({
             "phonemes": phonemes_text,
+            "segmented_phonemes": segment_phonemes(phonemes_text, text),
             "waqf_phonemes": waqf_phonemes,
             "wasl_waqf_phonemes": wasl_waqf_phonemes,
-            "waqf_wasl_phonemes": waqf_wasl_phonemes
+            "waqf_wasl_phonemes": waqf_wasl_phonemes,
         })
     except Exception as e:
         print(f"DEBUG: Exception = {e}")
@@ -1239,6 +1241,8 @@ async def ws_endpoint(ws: WebSocket):
                                             },
                                             "waqf_phonemes": getattr(session.phonetizer_out, "waqf_phonemes", ""),
                                             "wasl_waqf_phonemes": getattr(session.phonetizer_out, "wasl_waqf_phonemes", ""),
+                                            "waqf_wasl_phonemes": getattr(session.phonetizer_out, "waqf_wasl_phonemes", ""),
+                                            "spaced_phonemes": getattr(session.phonetizer_out, "spaced_phonemes", ""),
                                             "sifat": [
                                                 _to_serializable(s)
                                                 for s in getattr(session.phonetizer_out, "sifat", [])
@@ -1322,6 +1326,8 @@ async def ws_endpoint(ws: WebSocket):
                         },
                         "waqf_phonemes": getattr(session.phonetizer_out, "waqf_phonemes", ""),
                         "wasl_waqf_phonemes": getattr(session.phonetizer_out, "wasl_waqf_phonemes", ""),
+                        "waqf_wasl_phonemes": getattr(session.phonetizer_out, "waqf_wasl_phonemes", ""),
+                        "spaced_phonemes": getattr(session.phonetizer_out, "spaced_phonemes", ""),
                         "sifat": [
                             _to_serializable(s)
                             for s in getattr(current_phonetizer, "sifat", [])
