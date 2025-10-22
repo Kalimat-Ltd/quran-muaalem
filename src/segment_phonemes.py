@@ -23,13 +23,13 @@ from typing import List, Tuple, Union
 # Characters that can be ignored when aligning because they do not surface
 # in the phoneme stream (e.g. silent alif, sukun, shadda markers).
 OPTIONAL_UTHMANI_CHARS: set[str] = {
-    "ٱ", # alif wasla – silent in many contexts
+    "ٱ",  # alif wasla – silent in many contexts
     "ْ",  # sukun
     "ّ",  # shadda – handled by doubled consonants in phonemes
     "ٓ",  # maddah
     "ٔ",  # hamza above
     "ٕ",  # hamza below
-    "ـ", # tatweel
+    "ـ",  # tatweel
     "۟",  # waqf markers
     "ۢ",
     "ۭ",
@@ -67,8 +67,8 @@ EQUIVALENT_PAIRS: set[Tuple[str, str]] = {
     ("ي", "ۦ"),
     ("و", "ۥ"),
     ("ن", "ں"),
-    ('م', '۾'),
-    ('۾', 'م')
+    ("م", "۾"),
+    ("۾", "م"),
 }
 
 HURUF_MUQATTAAT_PHONEMES: dict[str, str] = {
@@ -86,7 +86,7 @@ HURUF_MUQATTAAT_PHONEMES: dict[str, str] = {
     "حم": "حَاامِۦۦۦۦۦۦم",
     "عسق": "عَيييييںںںسِۦۦۦۦۦۦںںںقَااااااف",
     "ق": "قَااااااف",
-    "ن": "نُۥۥۥۥۥۥن"
+    "ن": "نُۥۥۥۥۥۥن",
 }
 
 
@@ -171,6 +171,7 @@ def _last_base_letter(word: str) -> str:
         return ch
     return ""
 
+
 def detect_tajweed_rule(prev_word: str, next_word: str) -> str | None:
     """
     Detects basic tajweed assimilation rules between two words.
@@ -212,19 +213,41 @@ def detect_tajweed_rule(prev_word: str, next_word: str) -> str | None:
         return "idgham_no_ghunnah"
     if first == "ب":
         return "iqlab"
-    if first in {"ت", "ث", "ج", "د", "ذ", "ز", "س", "ش", "ص", "ض", "ط", "ظ", "ف", "ق", "ك"}:
+    if first in {
+        "ت",
+        "ث",
+        "ج",
+        "د",
+        "ذ",
+        "ز",
+        "س",
+        "ش",
+        "ص",
+        "ض",
+        "ط",
+        "ظ",
+        "ف",
+        "ق",
+        "ك",
+    }:
         return "ikhfa"
     return "clear"
 
 
 def _base_letter_counts(word: str) -> Counter[str]:
     counts: Counter[str] = Counter()
+    prev_base: str | None = None
     for ch in word:
-        if ud.combining(ch):
+        if ch == "ّ":  # shadda - double the previous base
+            if prev_base is not None:
+                counts[prev_base] += 1
+        elif ud.combining(ch):
             continue
-        if ch in OPTIONAL_UTHMANI_CHARS:
+        elif ch in OPTIONAL_UTHMANI_CHARS:
             continue
-        counts[ch] += 1
+        else:
+            counts[ch] += 1
+            prev_base = ch
     return counts
 
 
@@ -236,12 +259,16 @@ def _count_base_letters(chars: List[str]) -> Counter[str]:
     return counts
 
 
-def _align(uthmani_no_spaces: str, phonemes: str) -> Tuple[int, List[Tuple[str, int | None, int | None]]]:
+def _align(
+    uthmani_no_spaces: str, phonemes: str
+) -> Tuple[int, List[Tuple[str, int | None, int | None]]]:
     """Align the two strings with a standard edit-distance DP."""
 
     rows, cols = len(uthmani_no_spaces), len(phonemes)
     dp: List[List[int]] = [[0] * (cols + 1) for _ in range(rows + 1)]
-    back: List[List[Tuple[str, int | None, int | None] | None]] = [[None] * (cols + 1) for _ in range(rows + 1)]
+    back: List[List[Tuple[str, int | None, int | None] | None]] = [
+        [None] * (cols + 1) for _ in range(rows + 1)
+    ]
 
     for row in range(1, rows + 1):
         dp[row][0] = dp[row - 1][0] + _deletion_cost(uthmani_no_spaces[row - 1])
@@ -291,7 +318,9 @@ def _align(uthmani_no_spaces: str, phonemes: str) -> Tuple[int, List[Tuple[str, 
     return dp[rows][cols], operations
 
 
-def _build_word_char_mapping(word: str, phoneme_word: str) -> List[dict[str, Union[str, List[str]]]]:
+def _build_word_char_mapping(
+    word: str, phoneme_word: str
+) -> List[dict[str, Union[str, List[str]]]]:
     if not word:
         return []
 
@@ -307,7 +336,9 @@ def _build_word_char_mapping(word: str, phoneme_word: str) -> List[dict[str, Uni
             last_base = idx
             prev_base_index.append(last_base)
 
-    def _matches_uthmani_phoneme(uth_char: str, phoneme: str, base_char: str | None = None) -> bool:
+    def _matches_uthmani_phoneme(
+        uth_char: str, phoneme: str, base_char: str | None = None
+    ) -> bool:
         if uth_char == "ّ":
             if base_char is None:
                 return False
@@ -319,7 +350,9 @@ def _build_word_char_mapping(word: str, phoneme_word: str) -> List[dict[str, Uni
         return False
 
     def _count_matches_for(target_char: str, values: List[str]) -> int:
-        return sum(1 for value in values if _matches_uthmani_phoneme(target_char, value))
+        return sum(
+            1 for value in values if _matches_uthmani_phoneme(target_char, value)
+        )
 
     def _find_insertion_target(phon_char: str, start: int, last_attached: int) -> int:
         for idx in range(start, len(word)):
@@ -354,7 +387,9 @@ def _build_word_char_mapping(word: str, phoneme_word: str) -> List[dict[str, Uni
                     char_groups[uth_pos].append(phon_char)
                     last_attached = uth_pos
                 else:
-                    target = _find_insertion_target(phon_char, uth_pos + 1, last_attached)
+                    target = _find_insertion_target(
+                        phon_char, uth_pos + 1, last_attached
+                    )
                     char_groups[target].append(phon_char)
                     last_attached = target
             uth_pos += 1
@@ -363,7 +398,9 @@ def _build_word_char_mapping(word: str, phoneme_word: str) -> List[dict[str, Uni
             uth_pos += 1
         elif op == "ins":
             if phon_pos < len(phoneme_word):
-                target = _find_insertion_target(phoneme_word[phon_pos], uth_pos, last_attached)
+                target = _find_insertion_target(
+                    phoneme_word[phon_pos], uth_pos, last_attached
+                )
                 char_groups[target].append(phoneme_word[phon_pos])
                 last_attached = target
             phon_pos += 1
@@ -448,7 +485,9 @@ def _build_word_char_mapping(word: str, phoneme_word: str) -> List[dict[str, Uni
 
         current_phonemes = current_entry["phonemes"]
         next_phonemes = next_entry["phonemes"]
-        if not isinstance(current_phonemes, list) or not isinstance(next_phonemes, list):
+        if not isinstance(current_phonemes, list) or not isinstance(
+            next_phonemes, list
+        ):
             return
         if "ا" in current_phonemes:
             return
@@ -517,15 +556,13 @@ def _build_word_char_mapping(word: str, phoneme_word: str) -> List[dict[str, Uni
     return mapping
 
 
-def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: bool = False) -> Union[str, Tuple[str, List[dict[str, object]]]]:
+def segment_phonemes(
+    phoneme_text: str, uthmani_text: str, *, collect_mapping: bool = False
+) -> Union[str, Tuple[str, List[dict[str, object]]]]:
     """Return the phoneme stream with word boundaries inferred from the Uthmani text."""
 
-    phoneme_text = (
-        phoneme_text.replace('"', "").replace("\r", "").strip()
-    )
-    uthmani_text = (
-        uthmani_text.replace('"', "").replace("\r", " ").strip()
-    )
+    phoneme_text = phoneme_text.replace('"', "").replace("\r", "").strip()
+    uthmani_text = uthmani_text.replace('"', "").replace("\r", " ").strip()
 
     words = uthmani_text.split()
     if not words:
@@ -574,14 +611,28 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
             if uth_pos < total_chars:
                 word_idx = char_to_word[uth_pos]
                 next_word_idx = next_word_index_from(uth_pos)
-                if next_word_idx is not None and phoneme_text[phon_pos] != compact_uthmani[uth_pos]:
+                if (
+                    next_word_idx is not None
+                    and phoneme_text[phon_pos] != compact_uthmani[uth_pos]
+                ):
                     next_head = word_heads[next_word_idx]
                     next_base = word_bases[next_word_idx]
-                    if (
-                        (next_head and phoneme_text[phon_pos] == next_head)
-                        or (next_base and phoneme_text[phon_pos] == next_base)
+                    # Only assign to next word if:
+                    # 1. Phoneme matches next word's head/base
+                    # 2. Current word already has enough of this phoneme
+                    current_word_base_count = word_base_counts[word_idx]
+                    phoneme_char = phoneme_text[phon_pos]
+                    if (next_head and phoneme_char == next_head) or (
+                        next_base and phoneme_char == next_base
                     ):
-                        word_idx = next_word_idx
+                        # Count how many of this phoneme the current word segment already has
+                        current_count = sum(
+                            1 for ch in word_segments[word_idx] if ch == phoneme_char
+                        )
+                        allowed_count = current_word_base_count.get(phoneme_char, 0)
+                        # Only move to next word if current word is full
+                        if current_count >= allowed_count:
+                            word_idx = next_word_idx
             else:
                 word_idx = len(words) - 1
             current_word = word_idx
@@ -606,12 +657,18 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
 
                         def chars_equivalent(c1: str, c2: str) -> bool:
                             """Check if two characters are equivalent (bidirectional)."""
-                            return (c1 == c2 or
-                                    (c1, c2) in EQUIVALENT_PAIRS or
-                                    (c2, c1) in EQUIVALENT_PAIRS)
+                            return (
+                                c1 == c2
+                                or (c1, c2) in EQUIVALENT_PAIRS
+                                or (c2, c1) in EQUIVALENT_PAIRS
+                            )
 
-                        head_match = next_head and chars_equivalent(current_phoneme, next_head)
-                        base_match = next_base and chars_equivalent(current_phoneme, next_base)
+                        head_match = next_head and chars_equivalent(
+                            current_phoneme, next_head
+                        )
+                        base_match = next_base and chars_equivalent(
+                            current_phoneme, next_base
+                        )
                         if head_match or base_match:
                             current_word_end = word_ends[word_idx]
                             if uth_pos >= current_word_end - 1:
@@ -727,7 +784,11 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
             return []
 
         # If the last non-combining char is the base (or equivalent), include it
-        if chars[i] == base or (chars[i], base) in EQUIVALENT_PAIRS or (base, chars[i]) in EQUIVALENT_PAIRS:
+        if (
+            chars[i] == base
+            or (chars[i], base) in EQUIVALENT_PAIRS
+            or (base, chars[i]) in EQUIVALENT_PAIRS
+        ):
             # include this base and the combining marks that followed it
             suffix.insert(0, chars[i])
             suffix.extend(trailing_combining)
@@ -740,7 +801,11 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
                     k -= 1
                 if k < 0:
                     break
-                if chars[k] == base or (chars[k], base) in EQUIVALENT_PAIRS or (base, chars[k]) in EQUIVALENT_PAIRS:
+                if (
+                    chars[k] == base
+                    or (chars[k], base) in EQUIVALENT_PAIRS
+                    or (base, chars[k]) in EQUIVALENT_PAIRS
+                ):
                     # include the combining marks between k and j (these follow that base)
                     between = chars[k + 1 : i + 1]  # safe slice
                     # Prepend this base and its following combining marks to suffix
@@ -797,7 +862,9 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
             # phoneme_owner to locate the first phoneme index for the next
             # word and scanning left/right.
             try:
-                first_next_idx = min(i for i, o in enumerate(phoneme_owner) if o == idx + 1)
+                first_next_idx = min(
+                    i for i, o in enumerate(phoneme_owner) if o == idx + 1
+                )
             except ValueError:
                 first_next_idx = None
             if first_next_idx is not None:
@@ -817,7 +884,15 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
                 # how many bases are already at start of next segment
                 leading_next = 0
                 for ch in next_seg:
-                    if not ud.combining(ch) and ch not in OPTIONAL_UTHMANI_CHARS and (ch == next_base or (ch, next_base) in EQUIVALENT_PAIRS or (next_base, ch) in EQUIVALENT_PAIRS):
+                    if (
+                        not ud.combining(ch)
+                        and ch not in OPTIONAL_UTHMANI_CHARS
+                        and (
+                            ch == next_base
+                            or (ch, next_base) in EQUIVALENT_PAIRS
+                            or (next_base, ch) in EQUIVALENT_PAIRS
+                        )
+                    ):
                         leading_next += 1
                     else:
                         break
@@ -831,7 +906,15 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
                     # allowed_move base letters
                     base_seen = 0
                     for ch in suffix:
-                        if not ud.combining(ch) and ch not in OPTIONAL_UTHMANI_CHARS and (ch == next_base or (ch, next_base) in EQUIVALENT_PAIRS or (next_base, ch) in EQUIVALENT_PAIRS):
+                        if (
+                            not ud.combining(ch)
+                            and ch not in OPTIONAL_UTHMANI_CHARS
+                            and (
+                                ch == next_base
+                                or (ch, next_base) in EQUIVALENT_PAIRS
+                                or (next_base, ch) in EQUIVALENT_PAIRS
+                            )
+                        ):
                             if base_seen < allowed_move:
                                 new_suffix.append(ch)
                                 base_seen += 1
@@ -876,12 +959,18 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
         # The first non-combining should be the base
         i = 0
         # skip any leading optional chars (unlikely) or combining marks
-        while i < len(chars) and (ud.combining(chars[i]) or chars[i] in OPTIONAL_UTHMANI_CHARS):
+        while i < len(chars) and (
+            ud.combining(chars[i]) or chars[i] in OPTIONAL_UTHMANI_CHARS
+        ):
             # keep these in front of next_seg (do not treat as cluster)
             i += 1
         if i >= len(chars):
             return []
-        if chars[i] == base or (chars[i], base) in EQUIVALENT_PAIRS or (base, chars[i]) in EQUIVALENT_PAIRS:
+        if (
+            chars[i] == base
+            or (chars[i], base) in EQUIVALENT_PAIRS
+            or (base, chars[i]) in EQUIVALENT_PAIRS
+        ):
             # collect this base and any combining marks that follow
             cluster.append(chars.pop(i))
             while i < len(chars) and ud.combining(chars[i]):
@@ -902,13 +991,19 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
                 continue
             prev_seg = word_segments[idx]
             next_seg = word_segments[idx + 1]
+
             # if previous segment already contains the base we don't need to do anything
             def contains_base(chars: List[str], base: str) -> bool:
                 for ch in chars:
                     if not ud.combining(ch) and ch not in OPTIONAL_UTHMANI_CHARS:
-                        if ch == base or (ch, base) in EQUIVALENT_PAIRS or (base, ch) in EQUIVALENT_PAIRS:
+                        if (
+                            ch == base
+                            or (ch, base) in EQUIVALENT_PAIRS
+                            or (base, ch) in EQUIVALENT_PAIRS
+                        ):
                             return True
                 return False
+
             if contains_base(prev_seg, prev_last_base):
                 continue
             # try to extract leading cluster from next_seg
@@ -975,9 +1070,15 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
         cluster: List[str] = []
         i = 0
         # skip optional/combining at front
-        while i < len(next_seg) and (ud.combining(next_seg[i]) or next_seg[i] in OPTIONAL_UTHMANI_CHARS):
+        while i < len(next_seg) and (
+            ud.combining(next_seg[i]) or next_seg[i] in OPTIONAL_UTHMANI_CHARS
+        ):
             i += 1
-        if i < len(next_seg) and (next_seg[i] == next_first or (next_seg[i], next_first) in EQUIVALENT_PAIRS or (next_first, next_seg[i]) in EQUIVALENT_PAIRS):
+        if i < len(next_seg) and (
+            next_seg[i] == next_first
+            or (next_seg[i], next_first) in EQUIVALENT_PAIRS
+            or (next_first, next_seg[i]) in EQUIVALENT_PAIRS
+        ):
             # pop at index i repeatedly (base then its combining marks)
             cluster.append(next_seg.pop(i))
             while i < len(next_seg) and ud.combining(next_seg[i]):
@@ -1014,7 +1115,9 @@ def segment_phonemes(phoneme_text: str, uthmani_text: str, *, collect_mapping: b
 
         # find leading base in next_seg
         i = 0
-        while i < len(next_seg) and (ud.combining(next_seg[i]) or next_seg[i] in OPTIONAL_UTHMANI_CHARS):
+        while i < len(next_seg) and (
+            ud.combining(next_seg[i]) or next_seg[i] in OPTIONAL_UTHMANI_CHARS
+        ):
             i += 1
         if i >= len(next_seg):
             continue
@@ -1084,9 +1187,15 @@ def main() -> None:
             "Arguments accept raw strings or @path references to UTF-8 files."
         )
     )
-    parser.add_argument("--phonemes", "-p", help="Phoneme string or @file", required=False)
+    parser.add_argument(
+        "--phonemes", "-p", help="Phoneme string or @file", required=False
+    )
     parser.add_argument("--uthmani", "-u", help="Uthmani text or @file", required=False)
-    parser.add_argument("--show-cost", action="store_true", help="Display the alignment edit cost for diagnostics")
+    parser.add_argument(
+        "--show-cost",
+        action="store_true",
+        help="Display the alignment edit cost for diagnostics",
+    )
     parser.add_argument(
         "--output",
         "-o",
@@ -1101,10 +1210,16 @@ def main() -> None:
     if args.phonemes and args.uthmani:
         phoneme_text = _load_text(args.phonemes)
         uthmani_text = _load_text(args.uthmani)
-        phoneme_lines = [line.strip() for line in phoneme_text.split('\n') if line.strip()]
-        uthmani_lines = [line.strip() for line in uthmani_text.split('\n') if line.strip()]
+        phoneme_lines = [
+            line.strip() for line in phoneme_text.split("\n") if line.strip()
+        ]
+        uthmani_lines = [
+            line.strip() for line in uthmani_text.split("\n") if line.strip()
+        ]
         if len(phoneme_lines) != len(uthmani_lines):
-            print("Error: Number of phoneme lines does not match number of Uthmani lines")
+            print(
+                "Error: Number of phoneme lines does not match number of Uthmani lines"
+            )
             return
     else:
         # Simple interactive fallback to keep the script convenient during ad-hoc use.
@@ -1127,7 +1242,7 @@ def main() -> None:
         else:
             segmented_lines.append(result)
 
-    segmented = '\n'.join(segmented_lines)
+    segmented = "\n".join(segmented_lines)
 
     if args.output:
         output_path = Path(args.output)
@@ -1138,7 +1253,9 @@ def main() -> None:
 
     if collect_mapping and args.json_output:
         json_path = Path(args.json_output)
-        json_path.write_text(json.dumps(mappings, ensure_ascii=False, indent=2), encoding="utf-8")
+        json_path.write_text(
+            json.dumps(mappings, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         print(f"Wrote mapping JSON to {json_path}")
 
     if args.show_cost and len(phoneme_lines) == 1:
