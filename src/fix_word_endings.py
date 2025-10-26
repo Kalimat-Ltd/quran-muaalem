@@ -13,21 +13,24 @@ Date: October 2025
 """
 
 import re
-import json
 import sys
 import argparse
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
-from urllib import request as urllib_request
-from urllib import error as urllib_error
+from phoneme_service import fetch_phonemes
 
+# Set UTF-8 encoding for Windows console
+if sys.platform == "win32":
+    import codecs
 
-DEFAULT_PHONEME_SERVICE_URL = "https://joey-wondrous-wasp.ngrok-free.app/phonetize"
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "strict")
+    sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "strict")
 
 
 @dataclass
 class WaqfResult:
     """Result of applying Waqf rules to a word"""
+
     original: str
     waqf: str
     rule_applied: str
@@ -36,46 +39,46 @@ class WaqfResult:
 
 class ArabicTextProcessor:
     """Utility class for processing Arabic text and diacritics"""
-    
+
     # Arabic diacritics and symbols
     DIACRITICS = {
-        'fatha': '\u064E',      # َ
-        'damma': '\u064F',      # ُ
-        'kasra': '\u0650',      # ِ
-        'sukoon': '\u0652',     # ْ
-        'shadda': '\u0651',     # ّ
-        'tanween_fath': '\u064B',   # ً
-        'tanween_damm': '\u064C',   # ٌ
-        'tanween_kasr': '\u064D',   # ٍ
-        'alif_khanjariyya': '\u0670', # ٰ
-        'maddah': '\u0653',     # ٓ
+        "fatha": "\u064e",  # َ
+        "damma": "\u064f",  # ُ
+        "kasra": "\u0650",  # ِ
+        "sukoon": "\u0652",  # ْ
+        "shadda": "\u0651",  # ّ
+        "tanween_fath": "\u064b",  # ً
+        "tanween_damm": "\u064c",  # ٌ
+        "tanween_kasr": "\u064d",  # ٍ
+        "alif_khanjariyya": "\u0670",  # ٰ
+        "maddah": "\u0653",  # ٓ
     }
-    
+
     # Arabic letters
-    TAA_MARBOOTA = '\u0629'     # ة
-    HAA = '\u0647'              # ه
-    ALIF = '\u0627'             # ا
-    WAW = '\u0648'              # و
-    YAA = '\u064A'              # ي
-    ALIF_MAKSURA = '\u0649'     # ى
-    HAMZA = '\u0621'            # ء
-    HAMZA_ON_ALIF = '\u0623'    # أ
-    HAMZA_UNDER_ALIF = '\u0625' # إ
-    HAMZA_ON_WAW = '\u0624'     # ؤ
-    HAMZA_ON_YAA = '\u0626'     # ئ
-    
+    TAA_MARBOOTA = "\u0629"  # ة
+    HAA = "\u0647"  # ه
+    ALIF = "\u0627"  # ا
+    WAW = "\u0648"  # و
+    YAA = "\u064a"  # ي
+    ALIF_MAKSURA = "\u0649"  # ى
+    HAMZA = "\u0621"  # ء
+    HAMZA_ON_ALIF = "\u0623"  # أ
+    HAMZA_UNDER_ALIF = "\u0625"  # إ
+    HAMZA_ON_WAW = "\u0624"  # ؤ
+    HAMZA_ON_YAA = "\u0626"  # ئ
+
     # Hamzat Wasl
-    HAMZAT_WASL = '\u0671'      # ٱ
+    HAMZAT_WASL = "\u0671"  # ٱ
 
     # Orthographic marks that may appear at word endings but are not pronounced at Waqf
-    ORTHOGRAPHIC_ENDING_SIGNS: Tuple[str, ...] = ('\u06E2', '\u06E5')
-    
+    ORTHOGRAPHIC_ENDING_SIGNS: Tuple[str, ...] = ("\u06e2", "\u06e5", "\u06ed")
+
     @classmethod
     def remove_diacritics(cls, text: str) -> str:
         """Remove all diacritics from Arabic text"""
-        diacritics_pattern = '[' + ''.join(cls.DIACRITICS.values()) + ']'
-        return re.sub(diacritics_pattern, '', text)
-    
+        diacritics_pattern = "[" + "".join(cls.DIACRITICS.values()) + "]"
+        return re.sub(diacritics_pattern, "", text)
+
     @classmethod
     def get_last_character_info(cls, word: str) -> Tuple[str, str, List[str]]:
         """
@@ -83,19 +86,19 @@ class ArabicTextProcessor:
         Returns: (base_char, last_char_with_diacritics, diacritics_list)
         """
         if not word:
-            return '', '', []
-        
+            return "", "", []
+
         # Find diacritics on the last character
         diacritics = []
-        base_char = ''
-        
+        base_char = ""
+
         # Skip orthographic ending signs like small meem (ۢ)
         index = len(word) - 1
         while index >= 0 and word[index] in cls.ORTHOGRAPHIC_ENDING_SIGNS:
             index -= 1
 
         if index < 0:
-            return '', '', []
+            return "", "", []
 
         # Work backwards from the first non-orthographic mark to find the base character
         for i in range(index, -1, -1):
@@ -105,8 +108,8 @@ class ArabicTextProcessor:
             else:
                 base_char = char
                 break
-        
-        last_char_with_diacritics = base_char + ''.join(diacritics)
+
+        last_char_with_diacritics = base_char + "".join(diacritics)
         return base_char, last_char_with_diacritics, diacritics
 
     @classmethod
@@ -115,61 +118,66 @@ class ArabicTextProcessor:
         while text and text[-1] in cls.ORTHOGRAPHIC_ENDING_SIGNS:
             text = text[:-1]
         return text
-    
+
     @classmethod
     def has_tanween_fath_ending(cls, word: str) -> bool:
         """Check if word ends with tanween fath (including ًا pattern)"""
         if not word:
             return False
-        
+
         # Check for tanween fath directly
-        if word.endswith(cls.DIACRITICS['tanween_fath']):
+        if word.endswith(cls.DIACRITICS["tanween_fath"]):
             return True
-        
-        # Check for ًا pattern (tanween fath + alif)
-        tanween_alif_pattern = cls.DIACRITICS['tanween_fath'] + cls.ALIF
-        if word.endswith(tanween_alif_pattern):
-            return True
-        
+
+        # Check for ًا pattern (tanween fath + alif), possibly with orthographic marks in between
+        # Pattern: ً + (optional orthographic marks) + ا
+        if word.endswith(cls.ALIF):
+            # Work backwards to find tanween, skipping orthographic marks
+            idx = len(word) - 2  # Start before the final alif
+            while idx >= 0 and word[idx] in cls.ORTHOGRAPHIC_ENDING_SIGNS:
+                idx -= 1
+            if idx >= 0 and word[idx] == cls.DIACRITICS["tanween_fath"]:
+                return True
+
         return False
-    
+
     @classmethod
     def is_consonant(cls, char: str) -> bool:
         """Check if character is a consonant (not a long vowel)"""
         long_vowels = {cls.ALIF, cls.WAW, cls.YAA, cls.ALIF_MAKSURA}
         return char not in long_vowels and not char in cls.DIACRITICS.values()
-    
+
     @classmethod
     def has_tanween(cls, diacritics: List[str]) -> Optional[str]:
         """Check if diacritics contain tanween and return its type"""
         for diacritic in diacritics:
-            if diacritic == cls.DIACRITICS['tanween_fath']:
-                return 'fath'
-            elif diacritic == cls.DIACRITICS['tanween_damm']:
-                return 'damm'
-            elif diacritic == cls.DIACRITICS['tanween_kasr']:
-                return 'kasr'
+            if diacritic == cls.DIACRITICS["tanween_fath"]:
+                return "fath"
+            elif diacritic == cls.DIACRITICS["tanween_damm"]:
+                return "damm"
+            elif diacritic == cls.DIACRITICS["tanween_kasr"]:
+                return "kasr"
         return None
-    
+
     @classmethod
     def has_short_vowel(cls, diacritics: List[str]) -> Optional[str]:
         """Check if diacritics contain short vowels"""
         for diacritic in diacritics:
-            if diacritic == cls.DIACRITICS['fatha']:
-                return 'fatha'
-            elif diacritic == cls.DIACRITICS['damma']:
-                return 'damma'
-            elif diacritic == cls.DIACRITICS['kasra']:
-                return 'kasra'
+            if diacritic == cls.DIACRITICS["fatha"]:
+                return "fatha"
+            elif diacritic == cls.DIACRITICS["damma"]:
+                return "damma"
+            elif diacritic == cls.DIACRITICS["kasra"]:
+                return "kasra"
         return None
 
 
 class WaqfProcessor:
     """Main class for applying Waqf rules to Arabic words"""
-    
+
     def __init__(self):
         self.processor = ArabicTextProcessor()
-    
+
     def apply_waqf_rules(self, word: str) -> WaqfResult:
         """
         Apply appropriate Waqf rules to an Arabic word
@@ -177,274 +185,308 @@ class WaqfProcessor:
         """
         if not word.strip():
             return WaqfResult(word, word, "No rule", "Empty word")
-        
+
         word = word.strip()
         original_word = word
+        # Always remove orthographic marks from the word we're stopping on
         word = self.processor.strip_orthographic_end_marks(word)
-        
+
         # Get character info first
         base_char, _, diacritics = self.processor.get_last_character_info(word)
-        
+
         # Priority 1: Taa Marboota (ة) - highest priority, even with tanween fath
         if base_char == self.processor.TAA_MARBOOTA:
             result = self._apply_taa_marboota_rule(word)
             result.original = original_word
             return result
-        
+
         # Priority 2: Check for tanween fath patterns (including ًا)
         if self.processor.has_tanween_fath_ending(word):
             result = self._apply_tanween_fath_rule(word)
             result.original = original_word
             return result
-        
+
         # Priority 3: Other tanween types
         tanween_type = self.processor.has_tanween(diacritics)
-        if tanween_type in ['damm', 'kasr']:
+        if tanween_type in ["damm", "kasr"]:
             result = self._apply_tanween_damm_kasr_rule(word, tanween_type)
             result.original = original_word
             return result
-        
+
         # Priority 4: Hamza endings (before checking for alif)
         if self._is_hamza_ending(base_char):
             result = self._apply_hamza_rule(word)
             result.original = original_word
             return result
-        
+
         # Priority 5: Final Alif (ا)
         if base_char == self.processor.ALIF:
             result = self._apply_alif_rule(word)
             result.original = original_word
             return result
-        
+
         # Priority 6: Long vowels (و ي as vowels)
         if self._is_long_vowel_ending(word, base_char):
             result = self._apply_long_vowel_rule(word)
             result.original = original_word
             return result
-        
+
         # Priority 7: Soft letters (حرف لين)
         if self._is_soft_letter_ending(word):
             result = self._apply_soft_letter_rule(word)
             result.original = original_word
             return result
-        
+
         # Priority 8: Regular consonants with vowels
-        if self.processor.is_consonant(base_char) and self.processor.has_short_vowel(diacritics):
+        if self.processor.is_consonant(base_char) and self.processor.has_short_vowel(
+            diacritics
+        ):
             result = self._apply_consonant_rule(word)
             result.original = original_word
             return result
-        
+
         # Default: no change needed
         return WaqfResult(
             original=original_word,
             waqf=word,
             rule_applied="No change needed",
-            description="Word already ends appropriately for Waqf"
+            description="Word already ends appropriately for Waqf",
         )
-    
+
     def _apply_taa_marboota_rule(self, word: str) -> WaqfResult:
         """Rule 2: Taa Marboota becomes silent Haa"""
         # Find the taa marboota and remove everything after the base word
         taa_pos = word.rfind(self.processor.TAA_MARBOOTA)
         if taa_pos >= 0:
             word_base = word[:taa_pos]
-            waqf_word = word_base + self.processor.HAA + self.processor.DIACRITICS['sukoon']
+            waqf_word = (
+                word_base + self.processor.HAA + self.processor.DIACRITICS["sukoon"]
+            )
         else:
             waqf_word = word  # Fallback
-        
+
         return WaqfResult(
             original=word,
             waqf=waqf_word,
             rule_applied="Taa Marboota Rule",
-            description="تاء مربوطة تُبدل هاء ساكنة"
+            description="تاء مربوطة تُبدل هاء ساكنة",
         )
-    
+
     def _apply_tanween_fath_rule(self, word: str) -> WaqfResult:
         """Rule 5: Tanween Fath becomes Alif or gets removed for Hamza"""
-        # Handle ًا pattern (tanween fath + alif)
-        tanween_alif_pattern = self.processor.DIACRITICS['tanween_fath'] + self.processor.ALIF
-        
-        # Special case: Check for hamza before the tanween pattern
-        if word.endswith(tanween_alif_pattern):
-            # Remove the ًا pattern first
-            base_word = word[:-len(tanween_alif_pattern)]
-            
-            # Check what character comes before the tanween
-            if base_word and self._is_hamza_ending(base_word[-1]):
-                # For hamza + tanween fath: hamza gets sukoon
-                waqf_word = base_word + self.processor.DIACRITICS['sukoon']
-                description = "همزة مع تنوين الفتح تُسكن"
-            else:
-                # Regular case: becomes alif
-                waqf_word = base_word + self.processor.ALIF
-                description = "تنوين الفتح يُبدل ألفًا"
-        
+        # Handle ًا pattern (tanween fath + alif), possibly with orthographic marks between them
+        # First, check if it ends with alif and has tanween before it (with possible orthographic marks)
+        if word.endswith(self.processor.ALIF):
+            # Work backwards to find tanween, tracking orthographic marks
+            idx = len(word) - 2  # Start before the final alif
+            orthographic_marks_found = []
+            while idx >= 0 and word[idx] in self.processor.ORTHOGRAPHIC_ENDING_SIGNS:
+                orthographic_marks_found.insert(0, word[idx])
+                idx -= 1
+
+            if idx >= 0 and word[idx] == self.processor.DIACRITICS["tanween_fath"]:
+                # Found pattern: ً + (optional orthographic marks) + ا
+                # Remove the entire pattern (tanween + orthographic marks + alif)
+                base_word = word[:idx]  # Everything before the tanween
+
+                # Check what character comes before the tanween
+                if base_word and self._is_hamza_ending(base_word[-1]):
+                    # For hamza + tanween fath: hamza gets sukoon
+                    waqf_word = base_word + self.processor.DIACRITICS["sukoon"]
+                    description = "همزة مع تنوين الفتح تُسكن"
+                else:
+                    # Regular case: becomes fatha + alif (phoneme processor will add extra madd)
+                    waqf_word = (
+                        base_word
+                        + self.processor.DIACRITICS["fatha"]
+                        + self.processor.ALIF
+                    )
+                    description = "تنوين الفتح مع ألف يُبدل فتحة وألف"
+
+                return WaqfResult(
+                    original=word,
+                    waqf=waqf_word,
+                    rule_applied="Tanween Fath Rule",
+                    description=description,
+                )
+
         # Check for tanween fath directly (not followed by alif)
-        elif word.endswith(self.processor.DIACRITICS['tanween_fath']):
+        if word.endswith(self.processor.DIACRITICS["tanween_fath"]):
             # Check if the character before tanween is hamza
-            base_word = word[:-len(self.processor.DIACRITICS['tanween_fath'])]
-            
+            base_word = word[: -len(self.processor.DIACRITICS["tanween_fath"])]
+
             if base_word and self._is_hamza_ending(base_word[-1]):
                 # For hamza + tanween fath: hamza gets sukoon
-                waqf_word = base_word + self.processor.DIACRITICS['sukoon']
+                waqf_word = base_word + self.processor.DIACRITICS["sukoon"]
                 description = "همزة مع تنوين الفتح تُسكن"
             else:
                 # Regular tanween fath - replace with alif
-                waqf_word = word.replace(self.processor.DIACRITICS['tanween_fath'], self.processor.ALIF)
+                waqf_word = word.replace(
+                    self.processor.DIACRITICS["tanween_fath"], self.processor.ALIF
+                )
                 description = "تنوين الفتح يُبدل ألفًا"
-        
-        else:
-            # Should not reach here based on calling logic, but fallback
-            waqf_word = word
-            description = "تنوين الفتح - حالة استثنائية"
-        
+
+            return WaqfResult(
+                original=word,
+                waqf=waqf_word,
+                rule_applied="Tanween Fath Rule",
+                description=description,
+            )
+
+        # Should not reach here based on calling logic, but fallback
         return WaqfResult(
             original=word,
-            waqf=waqf_word,
+            waqf=word,
             rule_applied="Tanween Fath Rule",
-            description=description
+            description="تنوين الفتح - حالة استثنائية",
         )
-    
+
     def _apply_tanween_damm_kasr_rule(self, word: str, tanween_type: str) -> WaqfResult:
         """Rule 7: Tanween Damm/Kasr is removed and letter is made silent"""
         # Remove tanween, add sukoon
-        if tanween_type == 'damm':
-            word_without_tanween = word.replace(self.processor.DIACRITICS['tanween_damm'], '')
+        if tanween_type == "damm":
+            word_without_tanween = word.replace(
+                self.processor.DIACRITICS["tanween_damm"], ""
+            )
         else:
-            word_without_tanween = word.replace(self.processor.DIACRITICS['tanween_kasr'], '')
-        
-        word_without_tanween = self.processor.strip_orthographic_end_marks(word_without_tanween)
+            word_without_tanween = word.replace(
+                self.processor.DIACRITICS["tanween_kasr"], ""
+            )
+
+        word_without_tanween = self.processor.strip_orthographic_end_marks(
+            word_without_tanween
+        )
 
         vowel_diacritics = [
-            self.processor.DIACRITICS['fatha'],
-            self.processor.DIACRITICS['damma'],
-            self.processor.DIACRITICS['kasra'],
+            self.processor.DIACRITICS["fatha"],
+            self.processor.DIACRITICS["damma"],
+            self.processor.DIACRITICS["kasra"],
         ]
 
         for diacritic in vowel_diacritics:
             if word_without_tanween.endswith(diacritic):
-                word_without_tanween = word_without_tanween[:-len(diacritic)]
+                word_without_tanween = word_without_tanween[: -len(diacritic)]
                 break
 
-        if not word_without_tanween.endswith(self.processor.DIACRITICS['sukoon']):
-            waqf_word = word_without_tanween + self.processor.DIACRITICS['sukoon']
+        if not word_without_tanween.endswith(self.processor.DIACRITICS["sukoon"]):
+            waqf_word = word_without_tanween + self.processor.DIACRITICS["sukoon"]
         else:
             waqf_word = word_without_tanween
-        
+
         return WaqfResult(
             original=word,
             waqf=waqf_word,
             rule_applied="Tanween Damm/Kasr Rule",
-            description="تنوين الضم/الكسر يُحذف ويُسكن الحرف"
+            description="تنوين الضم/الكسر يُحذف ويُسكن الحرف",
         )
-    
+
     def _apply_alif_rule(self, word: str) -> WaqfResult:
         """Rule 3: Final Alif remains with natural lengthening"""
         return WaqfResult(
             original=word,
             waqf=word,  # No change
             rule_applied="Final Alif Rule",
-            description="الألف المتطرفة تبقى كما هي بالمد الطبيعي"
+            description="الألف المتطرفة تبقى كما هي بالمد الطبيعي",
         )
-    
+
     def _apply_long_vowel_rule(self, word: str) -> WaqfResult:
         """Rule 4: Long vowels (و ي) remain with natural lengthening"""
         return WaqfResult(
             original=word,
             waqf=word,  # No change
             rule_applied="Long Vowel Rule",
-            description="حرف المد يبقى كما هو بالمد الطبيعي"
+            description="حرف المد يبقى كما هو بالمد الطبيعي",
         )
-    
+
     def _apply_hamza_rule(self, word: str) -> WaqfResult:
         """Rule 6: Final Hamza is made silent"""
         # Remove vowel diacritics from hamza, add sukoon
         word_clean = word
         vowel_diacritics = [
-            self.processor.DIACRITICS['fatha'],
-            self.processor.DIACRITICS['damma'], 
-            self.processor.DIACRITICS['kasra']
+            self.processor.DIACRITICS["fatha"],
+            self.processor.DIACRITICS["damma"],
+            self.processor.DIACRITICS["kasra"],
         ]
-        
+
         # Remove only the last occurrence of vowel diacritics
         for diacritic in vowel_diacritics:
             if word_clean.endswith(diacritic):
-                word_clean = word_clean[:-len(diacritic)]
+                word_clean = word_clean[: -len(diacritic)]
                 break
-        
-        if not word_clean.endswith(self.processor.DIACRITICS['sukoon']):
-            waqf_word = word_clean + self.processor.DIACRITICS['sukoon']
+
+        if not word_clean.endswith(self.processor.DIACRITICS["sukoon"]):
+            waqf_word = word_clean + self.processor.DIACRITICS["sukoon"]
         else:
             waqf_word = word_clean
-        
+
         return WaqfResult(
             original=word,
             waqf=waqf_word,
             rule_applied="Final Hamza Rule",
-            description="الهمزة المتطرفة تُسكن"
+            description="الهمزة المتطرفة تُسكن",
         )
-    
+
     def _apply_soft_letter_rule(self, word: str) -> WaqfResult:
         """Rule 10: Soft letters (حرف لين) remain as is"""
         return WaqfResult(
             original=word,
             waqf=word,
             rule_applied="Soft Letter Rule",
-            description="حرف اللين يبقى كما هو"
+            description="حرف اللين يبقى كما هو",
         )
-    
+
     def _apply_consonant_rule(self, word: str) -> WaqfResult:
         """Rule 1: Regular consonants with vowels become silent"""
         # Remove only the final vowel diacritics, preserve internal ones
         word_result = word
         vowel_diacritics = [
-            self.processor.DIACRITICS['fatha'],
-            self.processor.DIACRITICS['damma'], 
-            self.processor.DIACRITICS['kasra']
+            self.processor.DIACRITICS["fatha"],
+            self.processor.DIACRITICS["damma"],
+            self.processor.DIACRITICS["kasra"],
         ]
-        
+
         # Remove the last vowel diacritic
         for diacritic in vowel_diacritics:
             if word_result.endswith(diacritic):
-                word_result = word_result[:-len(diacritic)]
+                word_result = word_result[: -len(diacritic)]
                 break
-        
+
         # Add sukoon if not already present
-        if not word_result.endswith(self.processor.DIACRITICS['sukoon']):
-            waqf_word = word_result + self.processor.DIACRITICS['sukoon']
+        if not word_result.endswith(self.processor.DIACRITICS["sukoon"]):
+            waqf_word = word_result + self.processor.DIACRITICS["sukoon"]
         else:
             waqf_word = word_result
-        
+
         return WaqfResult(
             original=word,
             waqf=waqf_word,
-            rule_applied="Consonant Sukoon Rule", 
-            description="الحرف المتحرك يُسكن عند الوقف"
+            rule_applied="Consonant Sukoon Rule",
+            description="الحرف المتحرك يُسكن عند الوقف",
         )
-    
+
     def _is_long_vowel_ending(self, word: str, base_char: str) -> bool:
         """Check if word ends with a long vowel (و or ي as vowels)"""
         if base_char not in [self.processor.WAW, self.processor.YAA]:
             return False
-        
+
         # Check if it's preceded by appropriate vowel
         if len(word) < 2:
             return False
-        
+
         # Get the character before the last one
         prev_char_info = self.processor.get_last_character_info(word[:-1])
         prev_diacritics = prev_char_info[2]
-        
+
         # For WAW: should be preceded by damma
         if base_char == self.processor.WAW:
-            return self.processor.DIACRITICS['damma'] in prev_diacritics
-        
+            return self.processor.DIACRITICS["damma"] in prev_diacritics
+
         # For YAA: should be preceded by kasra
         if base_char == self.processor.YAA:
-            return self.processor.DIACRITICS['kasra'] in prev_diacritics
-        
+            return self.processor.DIACRITICS["kasra"] in prev_diacritics
+
         return False
-    
+
     def _is_hamza_ending(self, base_char: str) -> bool:
         """Check if character is any form of hamza"""
         hamza_forms = [
@@ -452,29 +494,30 @@ class WaqfProcessor:
             self.processor.HAMZA_ON_ALIF,
             self.processor.HAMZA_UNDER_ALIF,
             self.processor.HAMZA_ON_WAW,
-            self.processor.HAMZA_ON_YAA
+            self.processor.HAMZA_ON_YAA,
         ]
         return base_char in hamza_forms
-    
+
     def _is_soft_letter_ending(self, word: str) -> bool:
         """Check if word ends with soft letter (حرف لين): و or ي preceded by fatha"""
         if len(word) < 2:
             return False
-        
+
         base_char, _, _ = self.processor.get_last_character_info(word)
-        
+
         if base_char not in [self.processor.WAW, self.processor.YAA]:
             return False
-        
+
         # Check if preceded by fatha (sukoon is implicit after fatha for soft letters)
         # This is for patterns like خَوْف، بَيْت
         prev_chars = word[:-1]
-        return self.processor.DIACRITICS['fatha'] in prev_chars
+        return self.processor.DIACRITICS["fatha"] in prev_chars
 
 
 @dataclass
 class MaddInfo:
     """Information about a detected madd segment"""
+
     madd_type: str
     letter: str
     phoneme_symbols: List[str]
@@ -484,29 +527,30 @@ class MaddInfo:
 @dataclass
 class PhonemeConfig:
     """Configuration for phoneme processing"""
+
     madd_lin_duration: int = 3
     madd_aaridh_duration: int = 4
     natural_madd_duration: int = 2
-    qalqala_letters: Tuple[str, ...] = ('ق', 'ط', 'ب', 'ج', 'د')
-    qalqala_symbol: str = 'ڇ'
-    short_vowel_symbols: Tuple[str, ...] = ('َ', 'ُ', 'ِ', 'ً', 'ٌ', 'ٍ')
+    qalqala_letters: Tuple[str, ...] = ("ق", "ط", "ب", "ج", "د")
+    qalqala_symbol: str = "ڇ"
+    short_vowel_symbols: Tuple[str, ...] = ("َ", "ُ", "ِ", "ً", "ٌ", "ٍ")
     madd_symbol_map: Dict[str, Dict[str, List[str]]] = field(
         default_factory=lambda: {
             ArabicTextProcessor.YAA: {
-                'lin': [ArabicTextProcessor.YAA],
-                'aaridh': ['ۦ', ArabicTextProcessor.YAA],
+                "lin": [ArabicTextProcessor.YAA],
+                "aaridh": ["ۦ", ArabicTextProcessor.YAA],
             },
             ArabicTextProcessor.WAW: {
-                'lin': [ArabicTextProcessor.WAW],
-                'aaridh': ['ۥ', ArabicTextProcessor.WAW],
+                "lin": [ArabicTextProcessor.WAW],
+                "aaridh": ["ۥ", ArabicTextProcessor.WAW],
             },
             ArabicTextProcessor.ALIF: {
-                'lin': [ArabicTextProcessor.ALIF],
-                'aaridh': [ArabicTextProcessor.ALIF],
+                "lin": [ArabicTextProcessor.ALIF],
+                "aaridh": [ArabicTextProcessor.ALIF],
             },
             ArabicTextProcessor.ALIF_MAKSURA: {
-                'lin': [ArabicTextProcessor.YAA],
-                'aaridh': ['ۦ', ArabicTextProcessor.YAA],
+                "lin": [ArabicTextProcessor.YAA],
+                "aaridh": ["ۦ", ArabicTextProcessor.YAA],
             },
         }
     )
@@ -522,6 +566,36 @@ class PhonemeProcessor:
         self._short_vowel_set = set(self.config.short_vowel_symbols)
 
     def process(self, phonemes: str, waqf_word: str) -> str:
+        """Adjust a phoneme string to match the Waqf (stopping) form of a word.
+
+        Parameters
+        - phonemes: A phoneme/transliteration string returned by an external
+          phonemizer service. This value is treated as a sequence of characters
+          where some characters represent short-vowel markers or special
+          symbols. Leading/trailing whitespace is ignored.
+
+        - waqf_word: The vocalised (diacritics present) word as it will appear
+          at the point of stopping. The function parses the word to determine
+          the final pronounced base character and any madd (elongation)
+          information that should affect the phoneme output.
+
+        Returns
+        - A transformed phoneme string where:
+          * trailing short-vowel symbols and a tanween-derived final noon are
+            removed if they vanish at the stop;
+          * madd sequences are lengthened/shortened according to the
+            configuration in ``PhonemeConfig``;
+          * a qalqala marker may be appended for certain final consonants.
+
+        Behaviour / edge cases
+        - If ``phonemes`` is empty (or whitespace-only) the original input is
+          returned unchanged.
+        - If the final pronounced consonant cannot be located the function
+          conservatively returns the trimmed phoneme string.
+        - The function operates on character-level tokens and expects the
+          phoneme service to use the same short-vowel symbol set configured
+          in ``PhonemeConfig``.
+        """
         phoneme_chars = list(phonemes.strip())
 
         if not phoneme_chars:
@@ -537,9 +611,8 @@ class PhonemeProcessor:
             target_char=waqf_final_char,
         )
 
-        if (
-            final_consonant_idx is not None
-            and final_consonant_idx + 1 < len(phoneme_chars)
+        if final_consonant_idx is not None and final_consonant_idx + 1 < len(
+            phoneme_chars
         ):
             phoneme_chars = phoneme_chars[: final_consonant_idx + 1]
             final_consonant_idx = len(phoneme_chars) - 1
@@ -565,7 +638,9 @@ class PhonemeProcessor:
             )
 
         final_consonant_char = None
-        if final_consonant_idx is not None and 0 <= final_consonant_idx < len(phoneme_chars):
+        if final_consonant_idx is not None and 0 <= final_consonant_idx < len(
+            phoneme_chars
+        ):
             final_consonant_char = phoneme_chars[final_consonant_idx]
 
         if (
@@ -575,19 +650,21 @@ class PhonemeProcessor:
         ):
             phoneme_chars.append(self.config.qalqala_symbol)
 
-        return ''.join(phoneme_chars)
+        return "".join(phoneme_chars)
 
     def _remove_trailing_short_vowels(self, chars: List[str]) -> None:
         """Pop short vowel markers from the tail of a phoneme list in-place."""
         while chars and chars[-1] in self._short_vowel_set:
             chars.pop()
 
-    def _strip_tanween_suffix(self, chars: List[str], waqf_final_char: Optional[str]) -> None:
+    def _strip_tanween_suffix(
+        self, chars: List[str], waqf_final_char: Optional[str]
+    ) -> None:
         """Remove a trailing tanween-derived noon if it vanishes in the Waqf form."""
         if not chars:
             return
 
-        if chars[-1] == 'ن' and waqf_final_char != 'ن':
+        if chars[-1] == "ن" and waqf_final_char != "ن":
             chars.pop()
             while chars and chars[-1] in self._short_vowel_set:
                 chars.pop()
@@ -596,7 +673,7 @@ class PhonemeProcessor:
         """Compute the desired length (in counts) for the detected Madd segment."""
         if madd_info.has_maddah_mark:
             return self.config.natural_madd_duration
-        if madd_info.madd_type == 'lin':
+        if madd_info.madd_type == "lin":
             return self.config.madd_lin_duration
         return self.config.madd_aaridh_duration
 
@@ -608,9 +685,9 @@ class PhonemeProcessor:
         for char in word:
             if char in self._diacritics_set:
                 if current is not None:
-                    current['diacritics'].append(char)
+                    current["diacritics"].append(char)
             else:
-                current = {'char': char, 'diacritics': []}
+                current = {"char": char, "diacritics": []}
                 tokens.append(current)
 
         return tokens
@@ -621,38 +698,66 @@ class PhonemeProcessor:
             return None
 
         last_token = tokens[-1]
-        has_maddah = self.processor.DIACRITICS['maddah'] in last_token['diacritics']
+        has_maddah = self.processor.DIACRITICS["maddah"] in last_token["diacritics"]
+        has_alif_khanjariyya = (
+            self.processor.DIACRITICS["alif_khanjariyya"] in last_token["diacritics"]
+        )
 
-        if has_maddah and last_token['char'] in (
+        if has_maddah and last_token["char"] in (
             self.processor.ALIF,
             self.processor.WAW,
             self.processor.YAA,
             self.processor.ALIF_MAKSURA,
         ):
             phoneme_symbols = self.config.madd_symbol_map.get(
-                last_token['char'],
+                last_token["char"],
                 {},
-            ).get('aaridh', [last_token['char']])
-            return MaddInfo('aaridh', last_token['char'], phoneme_symbols, has_maddah_mark=True)
+            ).get("aaridh", [last_token["char"]])
+            return MaddInfo(
+                "aaridh", last_token["char"], phoneme_symbols, has_maddah_mark=True
+            )
+
+        # Check for alif khanjariyya on the last token (e.g., نٰ in الرَّحْمَـٰنِ)
+        if has_alif_khanjariyya:
+            phoneme_symbols = self.config.madd_symbol_map.get(
+                self.processor.ALIF,
+                {},
+            ).get("aaridh", [self.processor.ALIF])
+            return MaddInfo(
+                "aaridh", self.processor.ALIF, phoneme_symbols, has_maddah_mark=False
+            )
 
         if len(tokens) < 2:
             return None
 
-        if self.processor.DIACRITICS['sukoon'] not in last_token['diacritics']:
+        if self.processor.DIACRITICS["sukoon"] not in last_token["diacritics"]:
             return None
 
         prev_token = tokens[-2]
-        prev_char = prev_token['char']
+        prev_char = prev_token["char"]
+
+        # Check for alif khanjariyya on the previous token (e.g., الرَّحْمَـٰنِ where ـٰ comes before ن)
+        if self.processor.DIACRITICS["alif_khanjariyya"] in prev_token["diacritics"]:
+            phoneme_symbols = self.config.madd_symbol_map.get(
+                self.processor.ALIF,
+                {},
+            ).get("aaridh", [self.processor.ALIF])
+            return MaddInfo(
+                "aaridh", self.processor.ALIF, phoneme_symbols, has_maddah_mark=False
+            )
 
         # Madd lin: و/ي ساكن مسبوق بفتح، مع الحرف الأخير ساكن للوقف
         if (
-            prev_char in (self.processor.WAW, self.processor.YAA)
-            and self.processor.DIACRITICS['sukoon'] in prev_token['diacritics']
+            prev_char
+            in (self.processor.WAW, self.processor.YAA, self.processor.ALIF_MAKSURA)
+            and self.processor.DIACRITICS["sukoon"] in prev_token["diacritics"]
             and len(tokens) >= 3
-            and self.processor.DIACRITICS['fatha'] in tokens[-3]['diacritics']
+            and self.processor.DIACRITICS["fatha"] in tokens[-3]["diacritics"]
         ):
-            phoneme_symbols = self.config.madd_symbol_map.get(prev_char, {}).get('lin', [prev_char])
-            return MaddInfo('lin', prev_char, phoneme_symbols, has_maddah_mark=False)
+            phoneme_symbols = self.config.madd_symbol_map.get(prev_char, {}).get(
+                "lin", [prev_char]
+            )
+            return MaddInfo("lin", prev_char, phoneme_symbols, has_maddah_mark=False)
 
         # Madd aaridh: الحرف السابق حرف مد (ا، و، ي)
         if prev_char in (
@@ -661,8 +766,31 @@ class PhonemeProcessor:
             self.processor.YAA,
             self.processor.ALIF_MAKSURA,
         ):
-            phoneme_symbols = self.config.madd_symbol_map.get(prev_char, {}).get('aaridh', [prev_char])
-            return MaddInfo('aaridh', prev_char, phoneme_symbols, has_maddah_mark=False)
+            phoneme_symbols = self.config.madd_symbol_map.get(prev_char, {}).get(
+                "aaridh", [prev_char]
+            )
+            return MaddInfo("aaridh", prev_char, phoneme_symbols, has_maddah_mark=False)
+
+        # Special case for the word الله (Allah) - has madd aaridh when stopping
+        # Look for the pattern ا ل ل(with shadda) ه anywhere in the token sequence ending with the last token
+        if len(tokens) >= 4:
+            # Check if the last 4 tokens match the الله pattern
+            if (
+                tokens[-4]["char"] == self.processor.ALIF
+                and tokens[-3]["char"] == "ل"
+                and tokens[-2]["char"] == "ل"
+                and self.processor.DIACRITICS["shadda"] in tokens[-2]["diacritics"]
+                and tokens[-1]["char"] == "ه"
+            ):
+                phoneme_symbols = self.config.madd_symbol_map.get(
+                    self.processor.ALIF, {}
+                ).get("aaridh", [self.processor.ALIF])
+                return MaddInfo(
+                    "aaridh",
+                    self.processor.ALIF,
+                    phoneme_symbols,
+                    has_maddah_mark=False,
+                )
 
         return None
 
@@ -703,12 +831,14 @@ class PhonemeProcessor:
                 start, trailing_diacritics = block
                 replacement = [symbol] * target_length
                 final_segment = chars[final_idx:]
-                return (
-                    chars[:start]
-                    + replacement
-                    + final_segment
-                    + trailing_diacritics
-                )
+                return chars[:start] + replacement + final_segment + trailing_diacritics
+
+        # If no existing madd block found, insert the madd before the final consonant
+        # This handles cases like alif_khanjariyya where the madd isn't in the phoneme string yet
+        if final_idx > 0:
+            # Insert madd symbols before the final consonant
+            replacement = [candidates[0]] * target_length
+            return chars[:final_idx] + replacement + chars[final_idx:]
 
         return chars
 
@@ -740,99 +870,8 @@ class PhonemeProcessor:
         """Return the final base character from a parsed token list, if any."""
         if not tokens:
             return None
-        return tokens[-1]['char']
+        return tokens[-1]["char"]
 
-
-def fetch_phonemes_from_service(
-    waqf_text: str,
-    service_url: str,
-    timeout: float = 10.0,
-) -> str:
-    """Fetch phoneme string for the given Waqf text from a remote service."""
-    if not service_url:
-        raise RuntimeError("Phoneme service URL is not configured")
-
-    waqf_text = waqf_text.strip()
-    if not waqf_text:
-        raise RuntimeError("Cannot fetch phonemes for an empty Waqf word")
-
-    payload = json.dumps({"text": waqf_text}).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-    def _perform_request(url: str) -> str:
-        request = urllib_request.Request(url, data=payload, headers=headers, method="POST")
-        with urllib_request.urlopen(request, timeout=timeout) as response:
-            raw_body = response.read()
-            charset = "utf-8"
-            if hasattr(response, "headers") and hasattr(response.headers, "get_content_charset"):
-                charset = response.headers.get_content_charset() or charset
-            return raw_body.decode(charset, errors="replace").strip()
-
-    def _raise_http_error(exc: urllib_error.HTTPError, url: str) -> RuntimeError:
-        snippet: str = ""
-        try:
-            body = exc.read()
-            if body:
-                decoded = body.decode("utf-8", errors="replace").strip()
-                if decoded:
-                    if len(decoded) > 200:
-                        decoded = decoded[:200] + "…"
-                    snippet = f" - Response: {decoded}"
-        except Exception:
-            snippet = ""
-        reason = exc.reason if hasattr(exc, "reason") else "Unknown error"
-        return RuntimeError(
-            f"Phoneme service returned HTTP {exc.code} at {url} ({reason}){snippet}"
-        )
-
-    try:
-        body_text = _perform_request(service_url)
-    except urllib_error.HTTPError as exc:
-        if exc.code == 404:
-            alternate_url = service_url.rstrip('/') + '/'
-            if alternate_url != service_url:
-                try:
-                    body_text = _perform_request(alternate_url)
-                    service_url = alternate_url
-                except urllib_error.HTTPError as exc_alt:
-                    raise _raise_http_error(exc_alt, alternate_url) from exc_alt
-                except urllib_error.URLError as exc_alt:
-                    raise RuntimeError(f"Unable to reach phoneme service ({exc_alt})") from exc_alt
-            else:
-                raise _raise_http_error(exc, service_url) from exc
-        else:
-            raise _raise_http_error(exc, service_url) from exc
-    except urllib_error.URLError as exc:
-        raise RuntimeError(f"Unable to reach phoneme service ({exc})") from exc
-
-    if not body_text:
-        raise RuntimeError("Phoneme service returned an empty response")
-
-    try:
-        parsed = json.loads(body_text)
-    except json.JSONDecodeError:
-        return body_text
-
-    if isinstance(parsed, dict):
-        for key in ("phonemes", "phoneme", "text", "result"):
-            value = parsed.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        raise RuntimeError("Phoneme service response did not contain a phoneme string")
-
-    if isinstance(parsed, list):
-        for item in parsed:
-            if isinstance(item, str) and item.strip():
-                return item.strip()
-        raise RuntimeError("Phoneme service response list did not contain a phoneme string")
-
-    if isinstance(parsed, str):
-        return parsed.strip()
-
-    raise RuntimeError("Unexpected phoneme service response format")
 
 def apply_waqf_to_word(
     word: str,
@@ -854,26 +893,24 @@ def apply_waqf_to_word(
 def process_single_word(
     word: str,
     phoneme_config: Optional[PhonemeConfig] = None,
-    phoneme_service_url: Optional[str] = DEFAULT_PHONEME_SERVICE_URL,
     phoneme_timeout: float = 10.0,
 ) -> None:
     """Process a single Arabic word and synchronise its phoneme string via the remote service."""
     processor = WaqfProcessor()
     result = processor.apply_waqf_rules(word)
 
-    if not phoneme_service_url:
-        raise RuntimeError("Phoneme service URL is required for processing")
-
-    raw_phonemes = fetch_phonemes_from_service(
+    raw_phonemes = fetch_phonemes(
         result.waqf,
-        phoneme_service_url,
         timeout=phoneme_timeout,
     )
 
     phoneme_processor = PhonemeProcessor(phoneme_config)
     updated_phonemes = phoneme_processor.process(raw_phonemes, result.waqf)
 
-    print(f"{result.waqf} {updated_phonemes}")
+    print(f"Waqf Word: {result.waqf}")
+    print(f"Original Word: {result.original}")
+    print(f"Original Phonemes: {raw_phonemes}")
+    print(f"Updated Phonemes: {updated_phonemes}")
 
 
 def main(
@@ -917,43 +954,38 @@ Supported Waqf Rules:
   • Tanween Damm/Kasr (ٌ/ٍ) → remove and add sukoon
   • Final Alif, Long vowels, Soft letters → no change
   • Final Hamza → sukoon
-        """
+        """,
     )
-    
+
+    parser.add_argument("word", help="Arabic word to process (with diacritics)")
     parser.add_argument(
-        'word', 
-        help='Arabic word to process (with diacritics)'
-    )
-    parser.add_argument(
-        '--madd-lin-length',
+        "--madd-lin-length",
         type=int,
         default=4,
-        help='Duration (in counts) for Madd Lin at Waqf (default: 4)',
+        help="Duration (in counts) for Madd Lin at Waqf (default: 4)",
     )
     parser.add_argument(
-        '--madd-aaridh-length',
+        "--madd-aaridh-length",
         type=int,
         default=4,
-        help='Duration (in counts) for Madd Aaridh lil-sukoon (default: 4)',
+        help="Duration (in counts) for Madd Aaridh lil-sukoon (default: 4)",
     )
     parser.add_argument(
-        '--madd-natural-length',
+        "--madd-natural-length",
         type=int,
         default=2,
-        help='Duration (in counts) for natural Madd (default: 2)',
+        help="Duration (in counts) for natural Madd (default: 2)",
     )
     parser.add_argument(
-        '--phoneme-timeout',
+        "--phoneme-timeout",
         type=float,
         default=10.0,
-        help='Timeout in seconds for contacting the default phoneme service (default: 10)',
+        help="Timeout in seconds for contacting the default phoneme service (default: 10)",
     )
     parser.add_argument(
-        '--version', 
-        action='version', 
-        version='Arabic Waqf Processor v1.0'
+        "--version", action="version", version="Arabic Waqf Processor v1.0"
     )
-    
+
     args = parser.parse_args(argv)
 
     try:
@@ -977,4 +1009,4 @@ Supported Waqf Rules:
 
 
 if __name__ == "__main__":
-    main(word='نَعْبُدُ')
+    main(word="بَعِيدٌۭ")
