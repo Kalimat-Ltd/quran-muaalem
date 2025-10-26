@@ -7,6 +7,7 @@ import logging
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -16,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from quran_muaalem import Muaalem, MuaalemOutput
 from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
+from arabic_to_phonemes import arabic_to_phonemes
 import diff_match_patch as dmp
 import sys
 from pathlib import Path
@@ -127,6 +129,61 @@ def _to_serializable(obj: Any) -> Any:
     return repr(obj)
 
 
+def _build_phoneme_output(text: str, moshaf: MoshafAttributes) -> SimpleNamespace:
+    """Generate phoneme data using the simplified arabic_to_phonemes pipeline.
+    
+    Adds marker words at the beginning and end to ensure proper phoneme connection,
+    then removes them from the final phonemes and mappings.
+    """
+    # Add marker word at beginning and end for proper phoneme context
+    marker_word = "فِيهَا"
+    augmented_text = f"{marker_word} {text} {marker_word}"
+    
+    # Generate phonemes with augmented text
+    phonemes_no_spaces_full = arabic_to_phonemes(augmented_text, moshaf, remove_spaces=True)
+    spaced_phonemes_full, spaced_char_map_full = segment_phonemes(
+        phonemes_no_spaces_full, augmented_text, collect_mapping=True
+    )
+    
+    # Calculate character offsets for marker words
+    marker_phonemes_start = (spaced_phonemes_full.split(" ")[0]) + " "
+    marker_phonemes_end = " " + (spaced_phonemes_full.split(" ")[-1])
+    
+    # Remove markers from phonemes_no_spaces
+    phonemes_no_spaces = phonemes_no_spaces_full
+    # Remove leading marker phonemes
+    if spaced_phonemes_full.startswith(marker_phonemes_start):
+        spaced_phonemes_full = spaced_phonemes_full[len(marker_phonemes_start):]
+    # Remove trailing marker phonemes
+    if spaced_phonemes_full.endswith(marker_phonemes_end):
+        spaced_phonemes_full = spaced_phonemes_full[:-len(marker_phonemes_end)]
+
+    phonemes_no_spaces = spaced_phonemes_full.replace(" ", "")
+
+    spaced_phonemes, spaced_char_map = segment_phonemes(
+        phonemes_no_spaces, text, collect_mapping=True
+    )
+
+    char_map: List[int | None] = []
+    if isinstance(spaced_char_map, list):
+        phoneme_iter = 0
+        for idx, ch in enumerate(spaced_phonemes):
+            if ch == " ":
+                continue
+            mapped = None
+            if idx < len(spaced_char_map):
+                mapped = spaced_char_map[idx]
+            char_map.append(mapped)
+            phoneme_iter += 1
+
+    return SimpleNamespace(
+        phonemes=phonemes_no_spaces,
+        spaced_phonemes=spaced_phonemes,
+        char_map=char_map,
+        spaced_char_map=spaced_char_map,
+    )
+
+
 class RollingBuffer:
     def __init__(self, sampling_rate: int, chunk_ms: int = DEFAULT_CHUNK_MS, max_chunks: int = DEFAULT_MAX_CHUNKS):
         chunk_secs = chunk_ms / 1000.0  # Convert milliseconds to seconds
@@ -189,10 +246,10 @@ class RollingBuffer:
 
 
 class SessionState:
-    REMAINING_THRESHOLD = 10
-    SHIFT_SIZE = 10
-    WORD_MATCH_RATIO = 0.7
-    FORCE_SLIDE_AFTER = 10
+    REMAINING_THRESHOLD = 20
+    SHIFT_SIZE = 5
+    WORD_MATCH_RATIO = 0.5
+    FORCE_SLIDE_AFTER = 20
     PREFETCH_THRESHOLD_WORDS = 10
     SLIDE_MARGIN_WORDS = 1
 
@@ -206,8 +263,8 @@ class SessionState:
         self.lock = asyncio.Lock()
         self.chunk_duration: int = DEFAULT_CHUNK_MS
         self.max_chunks: int = DEFAULT_MAX_CHUNKS
-        self.min_window_words: int = 2 * DEFAULT_MAX_CHUNKS + 1
-        self.max_window_words: int = 4 * DEFAULT_MAX_CHUNKS + 1
+        self.min_window_words: int = 4 * DEFAULT_MAX_CHUNKS + 1
+        self.max_window_words: int = 8 * DEFAULT_MAX_CHUNKS + 1
 
         self.moshaf: Optional[MoshafAttributes] = None
         self.aya_obj: Optional[Aya] = None
@@ -246,7 +303,7 @@ class SessionState:
         uthmani_text: str,
         moshaf: MoshafAttributes,
         first_prev_word: Optional[str] = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str]:
         """Process uthmani text word by word through Waqf rules and return adjusted phonemes.
 
         When processing inside an active session window, you can provide
@@ -254,6 +311,8 @@ class SessionState:
         first word in the window (index 0). For standalone calls (e.g. /phonetize),
         omit it and the function will consider the first word without carryover.
         """
+
+        logger.info(f"Waqf processing started for text: '{uthmani_text}', first_prev_word: '{first_prev_word}'")
 
         words = uthmani_text.split()
 
@@ -275,17 +334,29 @@ class SessionState:
 
                 next_word_local = words[i + 1] if i + 1 < len(words) else words[0]
 
+                logger.info(f"Processing word {i}: '{word}', prev: '{prev_word_local}', next: '{next_word_local}'")
+
                 # Apply Waqf rules to get the Waqf form of the word
                 waqf_result = waqf_processor.apply_waqf_rules(word)
                 wasl_waqf_result = waqf_processor.apply_waqf_rules(prev_word_local + " " + word)
                 waqf_wasl_result = waqf_processor.apply_waqf_rules(word + " " + next_word_local)
     
-                phoneme_word = quran_phonetizer(waqf_result.waqf.strip(), moshaf, remove_spaces=True).phonemes
-                wasl_waqf_phonemes = quran_phonetizer(wasl_waqf_result.waqf.strip(), moshaf, remove_spaces=False).phonemes
-                waqf_wasl_phonemes = quran_phonetizer(waqf_wasl_result.waqf.strip(), moshaf, remove_spaces=False).phonemes
+                logger.info(f"Waqf results - word: '{waqf_result.waqf}', wasl_waqf: '{wasl_waqf_result.waqf}', waqf_wasl: '{waqf_wasl_result.waqf}'")
+            
+                phoneme_word = arabic_to_phonemes(
+                    waqf_result.waqf, moshaf, remove_spaces=True
+                )
+                wasl_waqf_phonemes = arabic_to_phonemes(
+                    wasl_waqf_result.waqf.strip(), moshaf, remove_spaces=False
+                )
+                waqf_wasl_phonemes = arabic_to_phonemes(
+                    waqf_wasl_result.waqf.strip(), moshaf, remove_spaces=False
+                )
+
+                logger.info(f"Phonemes - word: '{phoneme_word}', wasl_waqf: '{wasl_waqf_phonemes}', waqf_wasl: '{waqf_wasl_phonemes}'")
 
                 # Process the phoneme string according to Waqf rules
-                adjusted_phoneme = phoneme_processor.process(phoneme_word, waqf_result.waqf.strip())
+                adjusted_phoneme = phoneme_processor.process(phoneme_word, waqf_result.waqf)
                 waqf_phoneme_results.append(adjusted_phoneme)
 
                 wasl_waqf_adjusted_phoneme = phoneme_processor.process(wasl_waqf_phonemes, wasl_waqf_result.waqf.strip())
@@ -297,10 +368,15 @@ class SessionState:
                 waqf_wasl_adjusted_phoneme = segment_phonemes(waqf_wasl_adjusted_phoneme, f"{word} {next_word_local}") if len(waqf_wasl_adjusted_phoneme.split()) == 1 else waqf_wasl_adjusted_phoneme
                 waqf_wasl_adjusted_phoneme = waqf_wasl_adjusted_phoneme.split()[0]
                 waqf_wasl_results.append(waqf_wasl_adjusted_phoneme)
-            except Exception as e:
-                print(f"Warning: Failed to process Waqf for word '{word}': {e}")
 
-        return " ".join(waqf_phoneme_results), " ".join(wasl_waqf_results), " ".join(waqf_wasl_results)
+                logger.info(f"Adjusted phonemes - word: '{adjusted_phoneme}', wasl_waqf: '{wasl_waqf_adjusted_phoneme}', waqf_wasl: '{waqf_wasl_adjusted_phoneme}'")
+
+            except Exception as e:
+                logger.warning(f"Failed to process Waqf for word '{word}': {e}")
+
+        result = " ".join(waqf_phoneme_results), " ".join(wasl_waqf_results), " ".join(waqf_wasl_results)
+        logger.info(f"Waqf processing completed. Results: {result}")
+        return result
 
     @staticmethod
     def _build_char_to_word_map(text: str) -> Dict[int, int]:
@@ -463,9 +539,9 @@ class SessionState:
                     self.phonetizer_out.waqf_phonemes = waqf_phonemes
                     self.phonetizer_out.wasl_waqf_phonemes = wasl_waqf_phonemes
                     self.phonetizer_out.waqf_wasl_phonemes = waqf_wasl_phonemes
-                    self.phonetizer_out.spaced_phonemes, self.phonetizer_out.char_map = segment_phonemes(temp_spaced_phonemes, normalized_text, collect_mapping=True)
+                    # `spaced_phonemes` and `char_map` already populated by _build_phoneme_output
         except Exception as exc:
-            logger.error("quran_phonetizer failed for window text", exc_info=exc)
+            logger.error("arabic_to_phonemes failed for window text", exc_info=exc)
             self.phonetizer_out = None
         self.char_to_word_map = self._build_char_to_word_map(normalized_text)
         self.current_window_start_word = start_idx + 1
@@ -885,10 +961,6 @@ class SessionState:
         if self.max_chunks < 1:
             raise ValueError("max_chunks must be at least 1")
         
-        # Calculate min and max words based on chunk configuration
-        self.min_window_words = 2 * self.max_chunks + 1
-        self.max_window_words = 4 * self.max_chunks + 1
-        
         self.buffer = RollingBuffer(self.sr, chunk_ms=self.chunk_duration, max_chunks=self.max_chunks)
         self.window_extended_once = False
 
@@ -1109,6 +1181,15 @@ async def _startup() -> None:
     device = _select_device()
     dtype = _select_dtype(device)
     app.state.muaalem = Muaalem(device=device, dtype=dtype)
+    logger.info("Muaalem ASR model loaded on %s with dtype=%s", device, str(dtype))
+    
+    # Configure waqf.log handler
+    waqf_handler = logging.FileHandler('waqf.log', encoding='utf-8')
+    waqf_handler.setLevel(logging.INFO)
+    waqf_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    waqf_handler.setFormatter(waqf_formatter)
+    logger.addHandler(waqf_handler)
+    
 
 
 @app.get("/health")
@@ -1134,24 +1215,17 @@ async def phonetize(request: Dict[str, Any]) -> JSONResponse:
     )
     
     try:
-        phonetizer_out = quran_phonetizer(text, moshaf, remove_spaces=False)
-        print(f"DEBUG: phonetizer_out = {phonetizer_out}")
-        print(f"DEBUG: type(phonetizer_out) = {type(phonetizer_out)}")
-        print(f"DEBUG: phonemes_text = {repr(phonemes_text)}")
-        print(f"DEBUG: type(phonemes_text) = {type(phonemes_text)}")
-        if hasattr(phonemes_text, "text"):
-            phonemes_text = phonemes_text.text
-            print(f"DEBUG: phonemes_text after .text = {repr(phonemes_text)}")
+        phoneme_bundle = _build_phoneme_output(text, moshaf)
+
+        phonemes_text = phoneme_bundle.phonemes
 
         # Process waqf phonemes
         waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = SessionState._process_waqf_phonemes(text, moshaf)
-        print(f"DEBUG: waqf_phonemes = {repr(waqf_phonemes)}")
-        print(f"DEBUG: wasl_waqf_phonemes = {repr(wasl_waqf_phonemes)}")
-        print(f"DEBUG: waqf_wasl_phonemes = {repr(waqf_wasl_phonemes)}")
 
         return JSONResponse({
             "phonemes": phonemes_text,
-            "segmented_phonemes": segment_phonemes(phonemes_text, text),
+            "segmented_phonemes": phoneme_bundle.spaced_phonemes,
+            "char_map": _to_serializable(phoneme_bundle.char_map),
             "waqf_phonemes": waqf_phonemes,
             "wasl_waqf_phonemes": wasl_waqf_phonemes,
             "waqf_wasl_phonemes": waqf_wasl_phonemes,
@@ -1161,6 +1235,199 @@ async def phonetize(request: Dict[str, Any]) -> JSONResponse:
         import traceback
         traceback.print_exc()
         return JSONResponse({"error": f"Phonetization failed: {str(e)}"}, status_code=500)
+
+
+@app.post("/reference")
+async def reference(request: Dict[str, Any]) -> JSONResponse:
+    """Get phonetizer output for a specific range of words from a surah/ayah.
+    
+    If num_words extends beyond the current ayah, automatically fetches and concatenates
+    words from subsequent ayahs until the requested number of words is reached.
+    
+    Request body:
+    {
+        "surah": <int>,
+        "ayah": <int>,
+        "start_word": <int> (optional, default: 1),
+        "num_words": <int> (optional, default: all words from start_word to end of ayah),
+        "rewaya": "hafs" (optional),
+        "madd_monfasel_len": <int> (optional, default: 4),
+        "madd_mottasel_len": <int> (optional, default: 4),
+        "madd_mottasel_waqf": <int> (optional, default: 4),
+        "madd_aared_len": <int> (optional, default: 4)
+    }
+    """
+    surah = request.get("surah")
+    ayah = request.get("ayah")
+    
+    if surah is None or ayah is None:
+        return JSONResponse({"error": "Both 'surah' and 'ayah' are required"}, status_code=400)
+    
+    try:
+        surah = int(surah)
+        ayah = int(ayah)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "surah and ayah must be integers"}, status_code=400)
+    
+    if surah < 1 or surah > 114:
+        return JSONResponse({"error": "surah must be between 1 and 114"}, status_code=400)
+    
+    start_word = int(request.get("start_word", 1))
+    num_words_requested = request.get("num_words")
+    
+    if start_word < 1:
+        return JSONResponse({"error": "start_word must be at least 1"}, status_code=400)
+    
+    # Create moshaf attributes
+    moshaf = MoshafAttributes(
+        rewaya=request.get("rewaya", "hafs"),
+        madd_monfasel_len=int(request.get("madd_monfasel_len", 4)),
+        madd_mottasel_len=int(request.get("madd_mottasel_len", 4)),
+        madd_mottasel_waqf=int(request.get("madd_mottasel_waqf", 4)),
+        madd_aared_len=int(request.get("madd_aared_len", 4)),
+    )
+    
+    try:
+        # Load the initial ayah
+        aya_obj = Aya(surah, ayah)
+        full_aya = aya_obj.get()
+        all_words = [" ".join(w.split()) for w in (full_aya.uthmani_words or []) if w.strip()]
+        
+        if not all_words:
+            return JSONResponse({"error": f"No words found for surah {surah}, ayah {ayah}"}, status_code=404)
+        
+        # Determine target number of words
+        if num_words_requested is not None:
+            num_words_requested = int(num_words_requested)
+            if num_words_requested < 1:
+                return JSONResponse({"error": "num_words must be at least 1"}, status_code=400)
+        
+        # Collect words starting from start_word, fetching from subsequent ayahs if needed
+        selected_words: List[str] = []
+        ayah_segments: List[Dict[str, Any]] = []
+        
+        current_surah = surah
+        current_ayah = ayah
+        current_word_idx = start_word  # 1-based word index we're looking for
+        words_remaining = num_words_requested if num_words_requested else float('inf')
+        
+        # Track the previous word from the initial ayah for waqf processing
+        prev_global_word_for_waqf: Optional[str] = None
+        if start_word > 1 and start_word - 2 < len(all_words):
+            prev_global_word_for_waqf = all_words[start_word - 2]
+        
+        # Collect words starting from current_word_idx, fetching from subsequent ayahs if needed
+        max_iterations = 256  # Safety limit
+        iterations = 0
+        while words_remaining > 0 and iterations < max_iterations:
+            iterations += 1
+            
+            # Check if we've reached the end of the Quran
+            if current_surah > 114:
+                break
+            
+            try:
+                # Get words for current ayah
+                if current_surah == surah and current_ayah == ayah:
+                    current_words = all_words
+                else:
+                    # Fetch next ayah
+                    next_aya_obj = Aya(current_surah, current_ayah)
+                    next_full_aya = next_aya_obj.get()
+                    current_words = [" ".join(w.split()) for w in (next_full_aya.uthmani_words or []) if w.strip()]
+                
+                if not current_words:
+                    # No words in this ayah, try next ayah
+                    current_ayah += 1
+                    continue
+                
+                # Determine which words to take from this ayah
+                # If current_word_idx points beyond this ayah's words, skip to next ayah
+                if current_word_idx > len(current_words):
+                    current_word_idx -= len(current_words)
+                    current_ayah += 1
+                    continue
+                
+                # Take words starting from current_word_idx (1-based)
+                start_idx_local = current_word_idx - 1  # Convert to 0-based
+                words_from_current = current_words[start_idx_local:]
+                
+                # Take only what we need
+                words_to_take = min(int(words_remaining), len(words_from_current))
+                selected_words.extend(words_from_current[:words_to_take])
+                
+                # Record segment
+                ayah_segments.append({
+                    "surah": current_surah,
+                    "ayah": current_ayah,
+                    "start_word": current_word_idx,
+                    "end_word": current_word_idx + words_to_take - 1,
+                    "word_count": words_to_take
+                })
+                
+                words_remaining -= words_to_take
+                
+                # If we got all words we need, break
+                if words_remaining <= 0:
+                    break
+                
+                # Otherwise, move to next ayah and start from word 1
+                current_ayah += 1
+                current_word_idx = 1
+                
+            except Exception:
+                # Can't fetch current ayah (might not exist)
+                # Try moving to next surah
+                current_surah += 1
+                current_ayah = 1
+                current_word_idx = 1
+
+        
+        if not selected_words:
+            return JSONResponse({"error": "No words could be retrieved"}, status_code=500)
+        
+        text = " ".join(selected_words)
+        
+        # Get phonetizer output
+        phonetizer_out = _build_phoneme_output(text, moshaf)
+        # Get previous word for waqf processing
+        prev_global_word: Optional[str] = prev_global_word_for_waqf
+        
+        # Process waqf phonemes
+        waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = SessionState._process_waqf_phonemes(
+            text, moshaf, first_prev_word=prev_global_word
+        )
+        
+        # Build response
+        response_data = {
+            "surah": surah,
+            "ayah": ayah,
+            "start_word": start_word,
+            "num_words_retrieved": len(selected_words),
+            "num_words_requested": num_words_requested,
+            "spans_multiple_ayahs": len(ayah_segments) > 1,
+            "ayah_segments": ayah_segments,
+            "uthmani_text": text,
+            "phonetizer_out": {
+                "phonemes": getattr(phonetizer_out, "phonemes", ""),
+                "char_map": _to_serializable(getattr(phonetizer_out, "char_map", [])),
+            },
+            "waqf_phonemes": waqf_phonemes,
+            "wasl_waqf_phonemes": wasl_waqf_phonemes,
+            "waqf_wasl_phonemes": waqf_wasl_phonemes,
+            "spaced_phonemes": phonetizer_out.spaced_phonemes,
+            "spaced_char_map": _to_serializable(phonetizer_out.spaced_char_map),
+            "offsets": {
+                "uthmani_word_offset": start_word - 1,
+                "uthmani_char_offset": 0,
+            }
+        }
+        
+        return JSONResponse(response_data)
+        
+    except Exception as e:
+        logger.error(f"Reference endpoint failed for surah={surah}, ayah={ayah}", exc_info=e)
+        return JSONResponse({"error": f"Failed to process request: {str(e)}"}, status_code=500)
 
 
 @app.websocket("/ws")
@@ -1230,41 +1497,17 @@ async def ws_endpoint(ws: WebSocket):
                                             "text": getattr(out.phonemes, "text", None),
                                             "probs": _to_serializable(getattr(out.phonemes, "probs", None)),
                                             "ids": _to_serializable(getattr(out.phonemes, "ids", None)),
-                                        },
-                                        "sifat": [_to_serializable(s) for s in getattr(out, "sifat", [])],
-                                    }
-                                    ph_payload: Dict[str, Any] | None = None
-                                    if session.phonetizer_out is not None:
-                                        ph_payload = {
-                                            "phonemes": {
-                                                "text": session._reference_phoneme_text(),
-                                            },
-                                            "waqf_phonemes": getattr(session.phonetizer_out, "waqf_phonemes", ""),
-                                            "wasl_waqf_phonemes": getattr(session.phonetizer_out, "wasl_waqf_phonemes", ""),
-                                            "waqf_wasl_phonemes": getattr(session.phonetizer_out, "waqf_wasl_phonemes", ""),
-                                            "spaced_phonemes": getattr(session.phonetizer_out, "spaced_phonemes", ""),
-                                            "sifat": [
-                                                _to_serializable(s)
-                                                for s in getattr(session.phonetizer_out, "sifat", [])
-                                            ],
-                                            "char_map": _to_serializable(
-                                                getattr(session.phonetizer_out, "char_map", [])
-                                            ),
                                         }
-
-                                    offsets = session.current_offsets()
+                                    }
 
                                     await ws.send_text(
                                         json.dumps(
                                             {
                                                 "type": "inference",
                                                 "final": True,
-                                                "phonetizer_out": ph_payload,
                                                 "window_chunks": session.buffer.window_chunk_count(),
                                                 "total_samples": session.buffer.total_samples_including_staging(),
                                                 "result": result,
-                                                "uthmani": session.aya_ref_text,
-                                                "offsets": offsets,
                                             },
                                             ensure_ascii=False,
                                         )
@@ -1307,49 +1550,23 @@ async def ws_endpoint(ws: WebSocket):
                     continue
 
                 out = outs[0]
-                current_phonetizer = session.phonetizer_out
                 current_uthmani = session.aya_ref_text
                 result: Dict[str, Any] = {
                     "phonemes": {
                         "text": getattr(out.phonemes, "text", None),
                         "probs": _to_serializable(getattr(out.phonemes, "probs", None)),
                         "ids": _to_serializable(getattr(out.phonemes, "ids", None)),
-                    },
-                    "sifat": [_to_serializable(s) for s in getattr(out, "sifat", [])],
-                }
-
-                ph_payload: Dict[str, Any] | None = None
-                if current_phonetizer is not None:
-                    ph_payload = {
-                        "phonemes": {
-                            "text": session._reference_phoneme_text(),
-                        },
-                        "waqf_phonemes": getattr(session.phonetizer_out, "waqf_phonemes", ""),
-                        "wasl_waqf_phonemes": getattr(session.phonetizer_out, "wasl_waqf_phonemes", ""),
-                        "waqf_wasl_phonemes": getattr(session.phonetizer_out, "waqf_wasl_phonemes", ""),
-                        "spaced_phonemes": getattr(session.phonetizer_out, "spaced_phonemes", ""),
-                        "sifat": [
-                            _to_serializable(s)
-                            for s in getattr(current_phonetizer, "sifat", [])
-                        ],
-                        "char_map": _to_serializable(
-                            getattr(current_phonetizer, "char_map", [])
-                        ),
                     }
-
-                offsets = session.current_offsets()
+                }
 
                 await ws.send_text(
                     json.dumps(
                         {
                             "type": "inference",
                             "final": False,
-                            "phonetizer_out": ph_payload,
                             "window_chunks": session.buffer.window_chunk_count(),
                             "total_samples": session.buffer.total_samples(),
                             "result": result,
-                            "uthmani": current_uthmani,
-                            "offsets": offsets,
                         },
                         ensure_ascii=False,
                     )
@@ -1387,6 +1604,16 @@ def main() -> None:
                 log_config["formatters"]["default"]["fmt"] = "%(asctime)s - %(levelprefix)s %(message)s"
             if "access" in log_config["formatters"]:
                 log_config["formatters"]["access"]["fmt"] = "%(asctime)s - %(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s"
+        # Add file handler for waqf.log
+        if "handlers" in log_config:
+            log_config["handlers"]["waqf_file"] = {
+                "class": "logging.FileHandler",
+                "filename": "waqf.log",
+                "formatter": "default",
+                "encoding": "utf-8",
+            }
+            if "root" in log_config and "handlers" in log_config["root"]:
+                log_config["root"]["handlers"].append("waqf_file")
     else:
         # Fallback: minimal config with timestamps, still avoiding duplicates
         log_config = {
@@ -1403,8 +1630,14 @@ def main() -> None:
                     "formatter": "default",
                     "stream": "ext://sys.stdout",
                 },
+                "waqf_file": {
+                    "class": "logging.FileHandler",
+                    "filename": "waqf.log",
+                    "formatter": "default",
+                    "encoding": "utf-8",
+                },
             },
-            "root": {"handlers": ["default"], "level": "INFO"},
+            "root": {"handlers": ["default", "waqf_file"], "level": "INFO"},
         }
 
     uvicorn.run(
