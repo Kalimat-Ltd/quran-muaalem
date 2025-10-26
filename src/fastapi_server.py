@@ -15,6 +15,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from infer_phoneme2uthmani_byt5 import PhonemeToUthmaniByT5
 from quran_muaalem import Muaalem, MuaalemOutput
 from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
 from arabic_to_phonemes import arabic_to_phonemes
@@ -62,6 +63,7 @@ DEFAULT_CHUNK_MS = 2000
 DEFAULT_SR = 16000
 DEFAULT_MAX_CHUNKS = 5
 AUDIO_FORMAT = "pcm16le"  # fixed wire format for binary frames
+P2U_MODEL_PATH = Path(__file__).parent.parent / "assets" / "p2u_byt5_best.pt"
 
 
 def _to_serializable(obj: Any) -> Any:
@@ -1190,6 +1192,14 @@ async def _startup() -> None:
     waqf_handler.setFormatter(waqf_formatter)
     logger.addHandler(waqf_handler)
     
+    try:
+        logger.info("Initializing ByT5 phoneme->Uthmani model...")
+        logger.info(f"Path: {P2U_MODEL_PATH}, Device: {device}, Dtype: {dtype}")
+        app.state.phoneme2uth = PhonemeToUthmaniByT5(checkpoint_path=P2U_MODEL_PATH,device=device, dtype=dtype)
+        logger.info("ByT5 phoneme->Uthmani model initialized.")
+    except Exception as e:
+        logger.info(f"Failed to initialize ByT5 model: {e}")
+        app.state.phoneme2uth = None
 
 
 @app.get("/health")
@@ -1428,6 +1438,81 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
     except Exception as e:
         logger.error(f"Reference endpoint failed for surah={surah}, ayah={ayah}", exc_info=e)
         return JSONResponse({"error": f"Failed to process request: {str(e)}"}, status_code=500)
+
+
+@app.post("/uthmani")
+async def uthmani(request: Dict[str, Any]) -> JSONResponse:
+    # Check if phoneme2uthmani model is available
+    phoneme2uth = getattr(app.state, "phoneme2uth", None)
+    if phoneme2uth is None:
+        return JSONResponse({"error": "Phoneme to Uthmani model not available"}, status_code=503)
+    
+    # Check if this is a batch request
+    phonemes_list = request.get("phonemes_list")
+    if phonemes_list is not None:
+        # Batch conversion mode
+        if not isinstance(phonemes_list, list):
+            return JSONResponse({"error": "Valid 'phonemes_list' array required"}, status_code=400)
+        
+        if len(phonemes_list) == 0:
+            return JSONResponse({"error": "phonemes_list cannot be empty"}, status_code=400)
+        
+        # Validate all items are strings
+        for i, p in enumerate(phonemes_list):
+            if not isinstance(p, str):
+                return JSONResponse({
+                    "error": f"Invalid phoneme at index {i}: expected string, got {type(p).__name__}"
+                }, status_code=400)
+        
+        try:
+            # Remove spaces from all phonemes
+            phonemes_no_spaces_list = [p.replace(" ", "") for p in phonemes_list]
+            
+            # Batch convert
+            batch_size = request.get("batch_size", 8)
+            uthmani_list = phoneme2uth.batch_convert(
+                phonemes_no_spaces_list,
+                batch_size=batch_size,
+                show_progress=False
+            )
+            
+            return JSONResponse({
+                "mode": "batch",
+                "count": len(phonemes_list),
+                "results": [
+                    {
+                        "input_phonemes": orig,
+                        "uthmani_text": uthmani,
+                        "segmented_phonemes": segment_phonemes(orig, uthmani)
+                    }
+                    for orig, uthmani in zip(phonemes_list, uthmani_list)
+                ]
+            })
+        except Exception as e:
+            logger.error("Batch phoneme to Uthmani conversion failed", exc_info=e)
+            return JSONResponse({"error": f"Batch conversion failed: {str(e)}"}, status_code=500)
+    
+    # Single conversion mode
+    phonemes = request.get("phonemes")
+    if not phonemes or not isinstance(phonemes, str):
+        return JSONResponse({"error": "Valid 'phonemes' string or 'phonemes_list' array required"}, status_code=400)
+    
+    # Remove spaces from phonemes
+    phonemes_no_spaces = phonemes.replace(" ", "")
+    
+    try:
+        # Convert phonemes to Uthmani text
+        uthmani_text = phoneme2uth(phonemes_no_spaces)
+        
+        return JSONResponse({
+            "mode": "single",
+            "input_phonemes": phonemes,
+            "segmented_phonemes": segment_phonemes(phonemes_no_spaces, uthmani_text),
+            "uthmani_text": uthmani_text
+        })
+    except Exception as e:
+        logger.error("Phoneme to Uthmani conversion failed", exc_info=e)
+        return JSONResponse({"error": f"Conversion failed: {str(e)}"}, status_code=500)
 
 
 @app.websocket("/ws")
