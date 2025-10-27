@@ -330,7 +330,7 @@ class SessionState:
             try:
                 # Use carryover previous word for index 0 if provided, otherwise normal previous in-window word
                 if i == 0:
-                    prev_word_local = (first_prev_word or "").strip()
+                    prev_word_local = (first_prev_word or words[-1]).strip()
                 else:
                     prev_word_local = words[i - 1]
 
@@ -349,10 +349,10 @@ class SessionState:
                     waqf_result.waqf, moshaf, remove_spaces=True
                 )
                 wasl_waqf_phonemes = arabic_to_phonemes(
-                    wasl_waqf_result.waqf.strip(), moshaf, remove_spaces=False
+                    wasl_waqf_result.waqf.strip(), moshaf, remove_spaces=True
                 )
                 waqf_wasl_phonemes = arabic_to_phonemes(
-                    waqf_wasl_result.waqf.strip(), moshaf, remove_spaces=False
+                    waqf_wasl_result.waqf.strip(), moshaf, remove_spaces=True
                 )
 
                 logger.info(f"Phonemes - word: '{phoneme_word}', wasl_waqf: '{wasl_waqf_phonemes}', waqf_wasl: '{waqf_wasl_phonemes}'")
