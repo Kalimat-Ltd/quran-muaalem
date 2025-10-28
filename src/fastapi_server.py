@@ -324,6 +324,9 @@ class SessionState:
         waqf_phoneme_results: List[str] = []
         wasl_waqf_results: List[str] = []
         waqf_wasl_results: List[str] = []
+        waqf_texts: List[str] = []
+        wasl_waqf_texts: List[str] = []
+        waqf_wasl_texts: List[str] = []
         prev_word_local = ""
         next_word_local = ""
         for i, word in enumerate(words):
@@ -340,8 +343,15 @@ class SessionState:
 
                 # Apply Waqf rules to get the Waqf form of the word
                 waqf_result = waqf_processor.apply_waqf_rules(word)
+                waqf_text = waqf_result.waqf
                 wasl_waqf_result = waqf_processor.apply_waqf_rules(prev_word_local + " " + word)
+                wasl_waqf_text = wasl_waqf_result.waqf.split()[-1]
                 waqf_wasl_result = waqf_processor.apply_waqf_rules(word + " " + next_word_local)
+                waqf_wasl_text = waqf_wasl_result.waqf.split()[0]
+
+                waqf_texts.append(waqf_text)
+                wasl_waqf_texts.append(wasl_waqf_text)
+                waqf_wasl_texts.append(waqf_wasl_text)
     
                 logger.info(f"Waqf results - word: '{waqf_result.waqf}', wasl_waqf: '{wasl_waqf_result.waqf}', waqf_wasl: '{waqf_wasl_result.waqf}'")
             
@@ -376,7 +386,7 @@ class SessionState:
             except Exception as e:
                 logger.warning(f"Failed to process Waqf for word '{word}': {e}")
 
-        result = " ".join(waqf_phoneme_results), " ".join(wasl_waqf_results), " ".join(waqf_wasl_results)
+        result = " ".join(waqf_phoneme_results), " ".join(wasl_waqf_results), " ".join(waqf_wasl_results), " ".join(waqf_texts), " ".join(wasl_waqf_texts), " ".join(waqf_wasl_texts)
         logger.info(f"Waqf processing completed. Results: {result}")
         return result
 
@@ -534,13 +544,16 @@ class SessionState:
                     if start_idx > 0 and start_idx <= len(self.full_aya_words) - 1:
                         prev_global_word = self.full_aya_words[start_idx - 1]
 
-                    waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = self._process_waqf_phonemes(
+                    waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes, waqf_text, wasl_waqf_text, waqf_wasl_text = self._process_waqf_phonemes(
                         normalized_text, self.moshaf, first_prev_word=prev_global_word
                     )
                     # Store as attribute on phonetizer_out
                     self.phonetizer_out.waqf_phonemes = waqf_phonemes
                     self.phonetizer_out.wasl_waqf_phonemes = wasl_waqf_phonemes
                     self.phonetizer_out.waqf_wasl_phonemes = waqf_wasl_phonemes
+                    self.phonetizer_out.waqf_text = waqf_text
+                    self.phonetizer_out.wasl_waqf_text = wasl_waqf_text
+                    self.phonetizer_out.waqf_wasl_text = waqf_wasl_text
                     # `spaced_phonemes` and `char_map` already populated by _build_phoneme_output
         except Exception as exc:
             logger.error("arabic_to_phonemes failed for window text", exc_info=exc)
@@ -1230,7 +1243,7 @@ async def phonetize(request: Dict[str, Any]) -> JSONResponse:
         phonemes_text = phoneme_bundle.phonemes
 
         # Process waqf phonemes
-        waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = SessionState._process_waqf_phonemes(text, moshaf)
+        waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes, waqf_text, wasl_waqf_text, waqf_wasl_text = SessionState._process_waqf_phonemes(text, moshaf)
 
         return JSONResponse({
             "phonemes": phonemes_text,
@@ -1239,6 +1252,9 @@ async def phonetize(request: Dict[str, Any]) -> JSONResponse:
             "waqf_phonemes": waqf_phonemes,
             "wasl_waqf_phonemes": wasl_waqf_phonemes,
             "waqf_wasl_phonemes": waqf_wasl_phonemes,
+            "waqf_text": waqf_text,
+            "wasl_waqf_text": wasl_waqf_text,
+            "waqf_wasl_text": waqf_wasl_text,
         })
     except Exception as e:
         print(f"DEBUG: Exception = {e}")
@@ -1404,7 +1420,7 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
         prev_global_word: Optional[str] = prev_global_word_for_waqf
         
         # Process waqf phonemes
-        waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes = SessionState._process_waqf_phonemes(
+        waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes, waqf_text, wasl_waqf_text, waqf_wasl_text = SessionState._process_waqf_phonemes(
             text, moshaf, first_prev_word=prev_global_word
         )
         
@@ -1425,6 +1441,9 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
             "waqf_phonemes": waqf_phonemes,
             "wasl_waqf_phonemes": wasl_waqf_phonemes,
             "waqf_wasl_phonemes": waqf_wasl_phonemes,
+            "waqf_text": waqf_text,
+            "wasl_waqf_text": wasl_waqf_text,
+            "waqf_wasl_text": waqf_wasl_text,
             "spaced_phonemes": phonetizer_out.spaced_phonemes,
             "spaced_char_map": _to_serializable(phonetizer_out.spaced_char_map),
             "offsets": {
