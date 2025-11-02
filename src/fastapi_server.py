@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from collections import deque
 import logging
@@ -9,11 +10,14 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 from types import SimpleNamespace
 
+import librosa
 import numpy as np
 import torch
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+import librosa
 
 from infer_phoneme2uthmani_byt5 import PhonemeToUthmaniByT5
 from quran_muaalem import Muaalem, MuaalemOutput
@@ -62,6 +66,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_MS = 2000
 DEFAULT_SR = 16000
 DEFAULT_MAX_CHUNKS = 5
+FRAME_SECS = 0.02
+FRAME_LEN = int(DEFAULT_SR * FRAME_SECS)
+FRAMES_PER_CHUNK = int(DEFAULT_SR * (DEFAULT_CHUNK_MS / 1000.0)) // FRAME_LEN
 AUDIO_FORMAT = "pcm16le"  # fixed wire format for binary frames
 P2U_MODEL_PATH = Path(__file__).parent.parent / "assets" / "p2u_byt5_best.pt"
 
@@ -1797,6 +1804,60 @@ async def ws_endpoint(ws: WebSocket):
             await ws.close(code=1011)
         except Exception:
             pass
+
+
+@app.post("/predict")
+async def predict(audio: UploadFile, config: str = Form(...)) -> JSONResponse:
+    """Offline prediction endpoint that processes an entire audio file at once.
+    
+    Loads the complete audio file, runs inference on it as a single window,
+    and returns the inference result.
+    
+    Request:
+    - audio: Audio file (WAV/MP3/etc.)
+    - config: JSON string with config (surah, ayah, etc.)
+    
+    Response: Single inference result dict.
+    """
+    muaalem: Muaalem = app.state.muaalem
+    session = SessionState(muaalem)
+    
+    try:
+        # Parse config
+        config_dict = json.loads(config)
+        
+        # Load audio file
+        audio_bytes = await audio.read()
+        audio_buffer = io.BytesIO(audio_bytes)
+        wave, sr = librosa.load(audio_buffer, sr=DEFAULT_SR, mono=True)
+        if sr != DEFAULT_SR:
+            raise ValueError(f"Audio sample rate {sr} does not match expected {DEFAULT_SR}")
+        
+        # Configure session
+        session.configure(config_dict)
+        
+        # Run inference on the entire audio
+        if session.phonetizer_out is None:
+            raise ValueError("Session phonetizer not configured")
+        
+        outs = session.muaalem([wave], [session.phonetizer_out], sampling_rate=session.sr)
+        if not outs:
+            raise ValueError("No inference output")
+        out = outs[0]
+        result = _to_serializable(out)
+        
+        inference_result = {
+            "type": "inference",
+            "final": True,
+            "total_samples": len(wave),
+            "result": result,
+        }
+        
+        return JSONResponse({"inferences": [inference_result]}, status_code=200)
+        
+    except Exception as e:
+        logger.error("Prediction failed", exc_info=e)
+        return JSONResponse({"error": f"Prediction failed: {str(e)}"}, status_code=500)
 
 
 def main() -> None:
