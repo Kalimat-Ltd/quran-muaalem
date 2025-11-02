@@ -541,3 +541,35 @@ def explain_terminal_new(
     console.print(uth_text)
 
     _SESSION_STATE.append_html(phoneme_segments, uthmani_segments)
+
+
+def explain_terminal_uthmani(predicted_uthmani: str, reference_uthmani: str) -> None:
+    """Explain the difference between predicted and reference Uthmani text in terminal.
+
+    Computes diffs between reference and predicted Uthmani, and displays a colorized
+    view of the predicted Uthmani text, highlighting insertions (green), deletions (red strike),
+    and matches (white).
+
+    Args:
+        predicted_uthmani: The predicted Uthmani text string
+        reference_uthmani: The reference Uthmani text string
+    """
+    # Build diffs (reference = reference_uthmani, predicted = predicted_uthmani)
+    dmp_obj = dmp.diff_match_patch()
+    diffs = dmp_obj.diff_main(reference_uthmani, predicted_uthmani)
+    dmp_obj.diff_cleanupSemantic(diffs)
+
+    # Produce styled predicted Uthmani text
+    uth_text = Text()
+    for op, data in diffs:
+        if op == dmp_obj.DIFF_EQUAL:
+            uth_text.append(data, style="white")
+        elif op == dmp_obj.DIFF_INSERT:
+            uth_text.append(data, style="green")
+        elif op == dmp_obj.DIFF_DELETE:
+            uth_text.append(data, style="red strike")
+
+    # Print a labeled Uthmani diff
+    console = Console()
+    console.print("\nPredicted Uthmani (diff vs Reference):")
+    console.print(uth_text)
