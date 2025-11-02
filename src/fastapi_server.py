@@ -1265,15 +1265,18 @@ async def phonetize(request: Dict[str, Any]) -> JSONResponse:
 
 @app.post("/reference")
 async def reference(request: Dict[str, Any]) -> JSONResponse:
-    """Get phonetizer output for a specific range of words from a surah/ayah.
+    """Get phonetizer output for a specific range of words from a surah/ayah, or for multiple ayahs.
     
-    If num_words extends beyond the current ayah, automatically fetches and concatenates
+    For single ayah: If num_words extends beyond the current ayah, automatically fetches and concatenates
     words from subsequent ayahs until the requested number of words is reached.
+    
+    For multiple ayahs: Provide "ayahs" as a list of integers, returns a list of objects with uthmani_text and phonetizer_out for each ayah.
     
     Request body:
     {
         "surah": <int>,
-        "ayah": <int>,
+        "ayah": <int>,  # for single ayah
+        "ayahs": [<int>, ...],  # for multiple ayahs
         "start_word": <int> (optional, default: 1),
         "num_words": <int> (optional, default: all words from start_word to end of ayah),
         "rewaya": "hafs" (optional),
@@ -1285,24 +1288,18 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
     """
     surah = request.get("surah")
     ayah = request.get("ayah")
+    ayahs = request.get("ayahs")
     
-    if surah is None or ayah is None:
-        return JSONResponse({"error": "Both 'surah' and 'ayah' are required"}, status_code=400)
+    if surah is None:
+        return JSONResponse({"error": "'surah' is required"}, status_code=400)
     
     try:
         surah = int(surah)
-        ayah = int(ayah)
     except (TypeError, ValueError):
-        return JSONResponse({"error": "surah and ayah must be integers"}, status_code=400)
+        return JSONResponse({"error": "surah must be an integer"}, status_code=400)
     
     if surah < 1 or surah > 114:
         return JSONResponse({"error": "surah must be between 1 and 114"}, status_code=400)
-    
-    start_word = int(request.get("start_word", 1))
-    num_words_requested = request.get("num_words")
-    
-    if start_word < 1:
-        return JSONResponse({"error": "start_word must be at least 1"}, status_code=400)
     
     # Create moshaf attributes
     moshaf = MoshafAttributes(
@@ -1312,6 +1309,114 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
         madd_mottasel_waqf=int(request.get("madd_mottasel_waqf", 4)),
         madd_aared_len=int(request.get("madd_aared_len", 4)),
     )
+    
+    if ayahs is not None:
+        # Multiple ayahs
+        if not isinstance(ayahs, list):
+            return JSONResponse({"error": "'ayahs' must be a list of integers"}, status_code=400)
+        try:
+            ayahs = [int(a) for a in ayahs]
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "all ayahs must be integers"}, status_code=400)
+        
+        ayah_data = []
+        for a in ayahs:
+            try:
+                aya_obj = Aya(surah, a)
+                full_aya = aya_obj.get()
+                all_words = [" ".join(w.split()) for w in (full_aya.uthmani_words or []) if w.strip()]
+                if not all_words:
+                    ayah_data.append({
+                        "surah": surah,
+                        "ayah": a,
+                        "uthmani_text": "",
+                        "phonetizer_out": {
+                            "phonemes": "",
+                            "char_map": [],
+                        },
+                        "waqf_phonemes": "",
+                        "wasl_waqf_phonemes": "",
+                        "waqf_wasl_phonemes": "",
+                        "waqf_text": "",
+                        "wasl_waqf_text": "",
+                        "waqf_wasl_text": "",
+                        "spaced_phonemes": "",
+                        "spaced_char_map": [],
+                        "offsets": {
+                            "uthmani_word_offset": 0,
+                            "uthmani_char_offset": 0,
+                        }
+                    })
+                else:
+                    text = " ".join(all_words)
+                    phonetizer_out = _build_phoneme_output(text, moshaf)
+                    
+                    # Process waqf phonemes
+                    waqf_phonemes, wasl_waqf_phonemes, waqf_wasl_phonemes, waqf_text, wasl_waqf_text, waqf_wasl_text = SessionState._process_waqf_phonemes(
+                        text, moshaf, first_prev_word=None
+                    )
+                    
+                    ayah_data.append({
+                        "surah": surah,
+                        "ayah": a,
+                        "uthmani_text": text,
+                        "phonetizer_out": {
+                            "phonemes": getattr(phonetizer_out, "phonemes", ""),
+                            "char_map": _to_serializable(getattr(phonetizer_out, "char_map", [])),
+                        },
+                        "waqf_phonemes": waqf_phonemes,
+                        "wasl_waqf_phonemes": wasl_waqf_phonemes,
+                        "waqf_wasl_phonemes": waqf_wasl_phonemes,
+                        "waqf_text": waqf_text,
+                        "wasl_waqf_text": wasl_waqf_text,
+                        "waqf_wasl_text": waqf_wasl_text,
+                        "spaced_phonemes": getattr(phonetizer_out, "spaced_phonemes", ""),
+                        "spaced_char_map": _to_serializable(getattr(phonetizer_out, "spaced_char_map", [])),
+                        "offsets": {
+                            "uthmani_word_offset": 0,
+                            "uthmani_char_offset": 0,
+                        }
+                    })
+            except Exception as e:
+                logger.error(f"Failed to get ayah {surah}:{a}", exc_info=e)
+                ayah_data.append({
+                    "surah": surah,
+                    "ayah": a,
+                    "uthmani_text": "",
+                    "phonetizer_out": {
+                        "phonemes": "",
+                        "char_map": [],
+                    },
+                    "waqf_phonemes": "",
+                    "wasl_waqf_phonemes": "",
+                    "waqf_wasl_phonemes": "",
+                    "waqf_text": "",
+                    "wasl_waqf_text": "",
+                    "waqf_wasl_text": "",
+                    "spaced_phonemes": "",
+                    "spaced_char_map": [],
+                    "offsets": {
+                        "uthmani_word_offset": 0,
+                        "uthmani_char_offset": 0,
+                    }
+                })
+        
+        return JSONResponse({"ayah_data": ayah_data}, status_code=200)
+    
+    # Single ayah
+    if ayah is None:
+        return JSONResponse({"error": "'ayah' is required for single ayah request"}, status_code=400)
+    
+    try:
+        ayah = int(ayah)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "ayah must be an integer"}, status_code=400)
+    
+    start_word = int(request.get("start_word", 1))
+    num_words_requested = request.get("num_words")
+    
+    if start_word < 1:
+        return JSONResponse({"error": "start_word must be at least 1"}, status_code=400)
     
     try:
         # Load the initial ayah
@@ -1327,6 +1432,10 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
             num_words_requested = int(num_words_requested)
             if num_words_requested < 1:
                 return JSONResponse({"error": "num_words must be at least 1"}, status_code=400)
+            words_remaining = num_words_requested
+        else:
+            # Default: all words from start_word to end of current ayah
+            words_remaining = len(all_words) - start_word + 1
         
         # Collect words starting from start_word, fetching from subsequent ayahs if needed
         selected_words: List[str] = []
@@ -1335,7 +1444,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
         current_surah = surah
         current_ayah = ayah
         current_word_idx = start_word  # 1-based word index we're looking for
-        words_remaining = num_words_requested if num_words_requested else float('inf')
         
         # Track the previous word from the initial ayah for waqf processing
         prev_global_word_for_waqf: Optional[str] = None
