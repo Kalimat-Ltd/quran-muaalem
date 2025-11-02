@@ -765,7 +765,7 @@ class PhonemeProcessor:
             self.processor.WAW,
             self.processor.YAA,
             self.processor.ALIF_MAKSURA,
-        ):
+        ) and self._token_is_long_vowel(prev_token):
             phoneme_symbols = self.config.madd_symbol_map.get(prev_char, {}).get(
                 "aaridh", [prev_char]
             )
@@ -866,6 +866,38 @@ class PhonemeProcessor:
 
         return start, trailing_diacritics
 
+    def _token_has_short_vowel(self, token: Dict[str, List[str]]) -> bool:
+        """Check whether the token carries any short-vowel style diacritics."""
+        return any(
+            diacritic in self._short_vowel_set for diacritic in token["diacritics"]
+        )
+
+    def _token_is_long_vowel(self, token: Dict[str, List[str]]) -> bool:
+        """Heuristically determine if the token represents a true long vowel letter."""
+        char = token["char"]
+        diacritics = token["diacritics"]
+
+        if char == self.processor.ALIF:
+            # Alif behaves as a long vowel unless it carries an unexpected short vowel.
+            return not self._token_has_short_vowel(token)
+
+        if char in (
+            self.processor.WAW,
+            self.processor.YAA,
+            self.processor.ALIF_MAKSURA,
+        ):
+            if self._token_has_short_vowel(token):
+                return False
+
+            allowed = {
+                self.processor.DIACRITICS["sukoon"],
+                self.processor.DIACRITICS["maddah"],
+            }
+
+            return all(diacritic in allowed for diacritic in diacritics)
+
+        return False
+
     def _get_last_base_char(self, tokens: List[Dict[str, List[str]]]) -> Optional[str]:
         """Return the final base character from a parsed token list, if any."""
         if not tokens:
@@ -907,10 +939,7 @@ def process_single_word(
     phoneme_processor = PhonemeProcessor(phoneme_config)
     updated_phonemes = phoneme_processor.process(raw_phonemes, result.waqf)
 
-    print(f"Waqf Word: {result.waqf}")
-    print(f"Original Word: {result.original}")
-    print(f"Original Phonemes: {raw_phonemes}")
-    print(f"Updated Phonemes: {updated_phonemes}")
+    print(f"{result.waqf} {updated_phonemes}")
 
 
 def main(
@@ -1009,4 +1038,4 @@ Supported Waqf Rules:
 
 
 if __name__ == "__main__":
-    main(word="بَعِيدٌۭ")
+    main(word="ذَٰلِكَ رَجْعٌ بَعِيدٌ غِشَـٰوَةٌۭ")
