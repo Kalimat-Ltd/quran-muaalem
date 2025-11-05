@@ -27,7 +27,6 @@ import diff_match_patch as dmp
 import sys
 from pathlib import Path
 from fix_word_endings import WaqfProcessor, PhonemeProcessor, PhonemeConfig
-from segment_phonemes import segment_phonemes
 
 logger = logging.getLogger(__name__)
 
@@ -149,47 +148,16 @@ def _build_phoneme_output(text: str, moshaf: MoshafAttributes) -> SimpleNamespac
     augmented_text = f"{marker_word} {text} {marker_word}"
     
     # Generate phonemes with augmented text
-    phonemes_no_spaces_full = arabic_to_phonemes(augmented_text, moshaf, remove_spaces=True)
-    spaced_phonemes_full, spaced_char_map_full = segment_phonemes(
-        phonemes_no_spaces_full, augmented_text, collect_mapping=True
-    )
+    spaced_phonemes_full = arabic_to_phonemes(augmented_text, moshaf, remove_spaces=False)
     
     # Calculate character offsets for marker words
-    marker_phonemes_start = (spaced_phonemes_full.split(" ")[0]) + " "
-    marker_phonemes_end = " " + (spaced_phonemes_full.split(" ")[-1])
-    
-    # Remove markers from phonemes_no_spaces
-    phonemes_no_spaces = phonemes_no_spaces_full
-    # Remove leading marker phonemes
-    if spaced_phonemes_full.startswith(marker_phonemes_start):
-        spaced_phonemes_full = spaced_phonemes_full[len(marker_phonemes_start):]
-    # Remove trailing marker phonemes
-    if spaced_phonemes_full.endswith(marker_phonemes_end):
-        spaced_phonemes_full = spaced_phonemes_full[:-len(marker_phonemes_end)]
+    spaced_phonemes = " ".join(spaced_phonemes_full.split()[1:-1])
 
-    phonemes_no_spaces = spaced_phonemes_full.replace(" ", "")
-
-    spaced_phonemes, spaced_char_map = segment_phonemes(
-        phonemes_no_spaces, text, collect_mapping=True
-    )
-
-    char_map: List[int | None] = []
-    if isinstance(spaced_char_map, list):
-        phoneme_iter = 0
-        for idx, ch in enumerate(spaced_phonemes):
-            if ch == " ":
-                continue
-            mapped = None
-            if idx < len(spaced_char_map):
-                mapped = spaced_char_map[idx]
-            char_map.append(mapped)
-            phoneme_iter += 1
+    phonemes_no_spaces = spaced_phonemes.replace(" ", "")
 
     return SimpleNamespace(
         phonemes=phonemes_no_spaces,
         spaced_phonemes=spaced_phonemes,
-        char_map=char_map,
-        spaced_char_map=spaced_char_map,
     )
 
 
@@ -363,13 +331,13 @@ class SessionState:
                 logger.info(f"Waqf results - word: '{waqf_result.waqf}', wasl_waqf: '{wasl_waqf_result.waqf}', waqf_wasl: '{waqf_wasl_result.waqf}'")
             
                 phoneme_word = arabic_to_phonemes(
-                    waqf_result.waqf, moshaf, remove_spaces=True
+                    waqf_result.waqf, moshaf, remove_spaces=False
                 )
                 wasl_waqf_phonemes = arabic_to_phonemes(
-                    wasl_waqf_result.waqf.strip(), moshaf, remove_spaces=True
+                    wasl_waqf_result.waqf.strip(), moshaf, remove_spaces=False
                 )
                 waqf_wasl_phonemes = arabic_to_phonemes(
-                    waqf_wasl_result.waqf.strip(), moshaf, remove_spaces=True
+                    waqf_wasl_result.waqf.strip(), moshaf, remove_spaces=False
                 )
 
                 logger.info(f"Phonemes - word: '{phoneme_word}', wasl_waqf: '{wasl_waqf_phonemes}', waqf_wasl: '{waqf_wasl_phonemes}'")
@@ -379,12 +347,10 @@ class SessionState:
                 waqf_phoneme_results.append(adjusted_phoneme)
 
                 wasl_waqf_adjusted_phoneme = phoneme_processor.process(wasl_waqf_phonemes, wasl_waqf_result.waqf.strip())
-                wasl_waqf_adjusted_phoneme = segment_phonemes(wasl_waqf_adjusted_phoneme, f"{prev_word_local} {word}") if len(wasl_waqf_adjusted_phoneme.split()) == 1 else wasl_waqf_adjusted_phoneme
                 wasl_waqf_adjusted_phoneme = wasl_waqf_adjusted_phoneme.split()[-1]
                 wasl_waqf_results.append(wasl_waqf_adjusted_phoneme)
 
                 waqf_wasl_adjusted_phoneme = phoneme_processor.process(waqf_wasl_phonemes, waqf_wasl_result.waqf.strip())
-                waqf_wasl_adjusted_phoneme = segment_phonemes(waqf_wasl_adjusted_phoneme, f"{word} {next_word_local}") if len(waqf_wasl_adjusted_phoneme.split()) == 1 else waqf_wasl_adjusted_phoneme
                 waqf_wasl_adjusted_phoneme = waqf_wasl_adjusted_phoneme.split()[0]
                 waqf_wasl_results.append(waqf_wasl_adjusted_phoneme)
 
@@ -1616,9 +1582,7 @@ async def uthmani(request: Dict[str, Any]) -> JSONResponse:
                 "results": [
                     {
                         "input_phonemes": orig,
-                        "uthmani_text": uthmani,
-                        "segmented_phonemes": segment_phonemes(orig, uthmani)
-                    }
+                        "uthmani_text": uthmani,                    }
                     for orig, uthmani in zip(phonemes_list, uthmani_list)
                 ]
             })
@@ -1641,7 +1605,6 @@ async def uthmani(request: Dict[str, Any]) -> JSONResponse:
         return JSONResponse({
             "mode": "single",
             "input_phonemes": phonemes,
-            "segmented_phonemes": segment_phonemes(phonemes_no_spaces, uthmani_text),
             "uthmani_text": uthmani_text
         })
     except Exception as e:

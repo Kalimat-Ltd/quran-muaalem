@@ -1,6 +1,6 @@
 diff-match-patch>=20241021
 numpy>=2.2.6
-quran-transcript @ git+https://github.com/Kalimat-Ltd/quran-transcript.git
+quran-transcript @ git+https://github.com/Kalimat-Ltd/quran-transcript.git@98c27a6a31f5a7ca76bffdd6cc004c90893d11db#egg=quran-transcript
 rich>=14.1.0
 torch>=2.7.0
 transformers>=4.55.0
