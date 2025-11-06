@@ -1305,7 +1305,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
                         "uthmani_text": "",
                         "phonetizer_out": {
                             "phonemes": "",
-                            "char_map": [],
                         },
                         "waqf_phonemes": "",
                         "wasl_waqf_phonemes": "",
@@ -1314,7 +1313,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
                         "wasl_waqf_text": "",
                         "waqf_wasl_text": "",
                         "spaced_phonemes": "",
-                        "spaced_char_map": [],
                         "offsets": {
                             "uthmani_word_offset": 0,
                             "uthmani_char_offset": 0,
@@ -1335,7 +1333,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
                         "uthmani_text": text,
                         "phonetizer_out": {
                             "phonemes": getattr(phonetizer_out, "phonemes", ""),
-                            "char_map": _to_serializable(getattr(phonetizer_out, "char_map", [])),
                         },
                         "waqf_phonemes": waqf_phonemes,
                         "wasl_waqf_phonemes": wasl_waqf_phonemes,
@@ -1344,7 +1341,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
                         "wasl_waqf_text": wasl_waqf_text,
                         "waqf_wasl_text": waqf_wasl_text,
                         "spaced_phonemes": getattr(phonetizer_out, "spaced_phonemes", ""),
-                        "spaced_char_map": _to_serializable(getattr(phonetizer_out, "spaced_char_map", [])),
                         "offsets": {
                             "uthmani_word_offset": 0,
                             "uthmani_char_offset": 0,
@@ -1358,7 +1354,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
                     "uthmani_text": "",
                     "phonetizer_out": {
                         "phonemes": "",
-                        "char_map": [],
                     },
                     "waqf_phonemes": "",
                     "wasl_waqf_phonemes": "",
@@ -1367,7 +1362,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
                     "wasl_waqf_text": "",
                     "waqf_wasl_text": "",
                     "spaced_phonemes": "",
-                    "spaced_char_map": [],
                     "offsets": {
                         "uthmani_word_offset": 0,
                         "uthmani_char_offset": 0,
@@ -1517,7 +1511,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
             "uthmani_text": text,
             "phonetizer_out": {
                 "phonemes": getattr(phonetizer_out, "phonemes", ""),
-                "char_map": _to_serializable(getattr(phonetizer_out, "char_map", [])),
             },
             "waqf_phonemes": waqf_phonemes,
             "wasl_waqf_phonemes": wasl_waqf_phonemes,
@@ -1526,7 +1519,6 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
             "wasl_waqf_text": wasl_waqf_text,
             "waqf_wasl_text": waqf_wasl_text,
             "spaced_phonemes": phonetizer_out.spaced_phonemes,
-            "spaced_char_map": _to_serializable(phonetizer_out.spaced_char_map),
             "offsets": {
                 "uthmani_word_offset": start_word - 1,
                 "uthmani_char_offset": 0,
