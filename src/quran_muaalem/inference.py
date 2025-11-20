@@ -19,35 +19,8 @@ def format_sifat(
     chunked_phonemes_batch: list[list[str]],
     multi_level_tokenizer: MultiLevelTokenizer,
 ) -> list[list[Sifa]]:
-    sifat_batch = []
-    for seq_idx in range(len(chunked_phonemes_batch)):
-        sifat = []
-        for idx, ph_group in enumerate(chunked_phonemes_batch[seq_idx]):
-            sifa_dict = {}
-            for level in level_to_units:
-                if level == "phonemes":
-                    continue
-                sifa_idx = idx
-                if sifa_idx < len(level_to_units[level][seq_idx].ids):
-                    label = int(level_to_units[level][seq_idx].ids[sifa_idx])
-                    text = multi_level_tokenizer.sifat_to_en_vocab[level][label]
-                    p = level_to_units[level][seq_idx].probs[sifa_idx]
-                    sifa_dict[level] = SingleUnit(
-                        text=text, prob=float(p), idx=int(label)
-                    )
-                else:
-                    logging.info(
-                        f"Sequence: `{seq_idx}` has short Level: {level} we will place it with `None`"
-                    )
-                    sifa_dict[level] = None
-            sifat.append(
-                Sifa(
-                    phonemes_group=chunked_phonemes_batch[seq_idx][idx],
-                    **sifa_dict,
-                )
-            )
-        sifat_batch.append(sifat)
-    return sifat_batch
+    """Disabled - returns empty lists for sifat."""
+    return [[] for _ in chunked_phonemes_batch]
 
 
 class Muaalem:
@@ -123,66 +96,67 @@ class Muaalem:
                 prob (float): Confidence probability for this feature.
                 idx (int): Identifier for the feature class.
         """
+        try:
 
-        if sampling_rate != 16000:
-            raise ValueError(f"`sampling_rate` has to be 16000 got: `{sampling_rate}`")
+            if sampling_rate != 16000:
+                raise ValueError(f"`sampling_rate` has to be 16000 got: `{sampling_rate}`")
 
-        # TODO: check input waves
+            # TODO: check input waves
 
-        # Tokanizing Ref
-        level_to_ref_ids = self.multi_level_tokenizer.tokenize(
-            [r.phonemes for r in ref_quran_phonetic_script_list],
-            [r.sifat for r in ref_quran_phonetic_script_list],
-            to_dict=True,
-            return_tensors="pt",
-            padding="longest",
-        )["input_ids"]
-
-        features = self.processor(
-            waves, sampling_rate=sampling_rate, return_tensors="pt"
-        )
-        features = {k: v.to(self.device, dtype=self.dtype) for k, v in features.items()}
-        outs = self.model(**features, return_dict=False)[0]
-
-        probs = {}
-        for level in outs:
-            probs[level] = (
-                torch.nn.functional.softmax(outs[level], dim=-1).cpu().to(torch.float32)
+            # Tokanizing Ref
+            level_to_ref_ids = self.multi_level_tokenizer.tokenize(
+                [r.phonemes for r in ref_quran_phonetic_script_list],
+                [r.sifat for r in ref_quran_phonetic_script_list],
+                to_dict=True,
+                return_tensors="pt",
+                padding="longest",
+                truncation=True,
+                max_length=1024,
+            )["input_ids"]
+            logging.info("Processing audio features")
+            features = self.processor(
+                waves, sampling_rate=sampling_rate, return_tensors="pt"
             )
-
-        # Decoding only Phonemes Level
-        phonemes_units = phonemes_level_greedy_decode(
-            probs["phonemes"], self.multi_level_tokenizer.id_to_vocab["phonemes"]
-        )
-
-        chunked_phonemes_batch: list[list[str]] = []
-        for phonemes_unit in phonemes_units:
-            chunked_phonemes_batch.append(chunck_phonemes(phonemes_unit.text))
-
-        level_to_units = multilevel_greedy_decode(
-            level_to_probs=probs,
-            level_to_id_to_vocab=self.multi_level_tokenizer.id_to_vocab,
-            level_to_ref_ids=level_to_ref_ids,
-            chunked_phonemes_batch=chunked_phonemes_batch,
-            ref_chuncked_phonemes_batch=[
-                [s.phonemes for s in r.sifat] for r in ref_quran_phonetic_script_list
-            ],
-            phonemes_units=phonemes_units,
-        )
-
-        sifat_batch: list[list[Sifa]] = format_sifat(
-            level_to_units,
-            chunked_phonemes_batch,
-            self.multi_level_tokenizer,
-        )
-
-        outs = []
-        # looping over the batch
-        for idx in range(len(level_to_units["phonemes"])):
-            outs.append(
-                MuaalemOutput(
-                    phonemes=level_to_units["phonemes"][idx],
-                    sifat=sifat_batch[idx],
+            features = {k: v.to(self.device, dtype=self.dtype) for k, v in features.items()}
+            outs = self.model(**features, return_dict=False)[0]
+            probs = {}
+            for level in outs:
+                probs[level] = (
+                    torch.nn.functional.softmax(outs[level], dim=-1).cpu().to(torch.float32)
                 )
+
+            # Decoding only Phonemes Level
+            phonemes_units = phonemes_level_greedy_decode(
+                probs["phonemes"], self.multi_level_tokenizer.id_to_vocab["phonemes"]
             )
-        return outs
+            chunked_phonemes_batch: list[list[str]] = []
+            for phonemes_unit in phonemes_units:
+                chunked_phonemes_batch.append(chunck_phonemes(phonemes_unit.text))
+            level_to_units = multilevel_greedy_decode(
+                level_to_probs=probs,
+                level_to_id_to_vocab=self.multi_level_tokenizer.id_to_vocab,
+                level_to_ref_ids=level_to_ref_ids,
+                chunked_phonemes_batch=chunked_phonemes_batch,
+                ref_chuncked_phonemes_batch=[
+                    [s.phonemes for s in r.sifat] for r in ref_quran_phonetic_script_list
+                ],
+                phonemes_units=phonemes_units,
+            )
+
+            sifat_batch: list[list[Sifa]] = format_sifat(
+                level_to_units,
+                chunked_phonemes_batch,
+                self.multi_level_tokenizer,
+            )
+            outs = []
+            # looping over the batch using phonemes_units directly
+            for idx in range(len(phonemes_units)):
+                outs.append(
+                    MuaalemOutput(
+                        phonemes=phonemes_units[idx],
+                        sifat=sifat_batch[idx],
+                    )
+                )
+            return outs
+        except Exception as e:
+            raise
