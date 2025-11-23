@@ -2,6 +2,9 @@
 **/*.egg-info/
 *.pt
 
+saved_audio/
+sessions/
+
 # pypdl logs
 **pypdl.log
 

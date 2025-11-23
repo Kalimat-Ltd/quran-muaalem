@@ -3,16 +3,21 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 from collections import deque
 import logging
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
+import traceback
 from typing import Any, Deque, Dict, List, Optional
 from types import SimpleNamespace
+from datetime import datetime
+import uuid
 
 import librosa
 import numpy as np
 import torch
+import torchaudio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,7 +26,7 @@ import librosa
 
 from infer_phoneme2uthmani_byt5 import PhonemeToUthmaniByT5
 from quran_muaalem import Muaalem, MuaalemOutput
-from quran_transcript import Aya, MoshafAttributes, quran_phonetizer
+from quran_transcript import Aya, MoshafAttributes, SifaOutput, quran_phonetizer
 from arabic_to_phonemes import arabic_to_phonemes
 import diff_match_patch as dmp
 import sys
@@ -60,7 +65,12 @@ logger = logging.getLogger(__name__)
 #       "phonetizer_out": { ... },
 #       "result": { ... }
 #    }
-# 5) Control messages: {"type":"end"}, {"type":"reset"}, {"type":"ping"}
+# 5) Control messages: 
+#    - {"type":"end"}: End session and save audio
+#    - {"type":"reset"}: Reset session progress
+#    - {"type":"ping"}: Heartbeat (responds with {"type":"pong"})
+#    - {"type":"recitation_run", "data": {...}}: Save recitation run data to session directory
+#      Server responds with: {"type":"recitation_run_ack", "saved_path": <str>, "session_id": <str>}
 
 DEFAULT_CHUNK_MS = 2000
 DEFAULT_SR = 16000
@@ -237,11 +247,18 @@ class SessionState:
         self.phonetizer_out = None
         self.phonetizer_out_for_user = None
         self.buffer = RollingBuffer(self.sr)
+        self.audio_chunks: List[np.ndarray] = []  # Accumulate audio for saving
         self.lock = asyncio.Lock()
         self.chunk_duration: int = DEFAULT_CHUNK_MS
         self.max_chunks: int = DEFAULT_MAX_CHUNKS
         self.min_window_words: int = 4 * DEFAULT_MAX_CHUNKS + 1
         self.max_window_words: int = 8 * DEFAULT_MAX_CHUNKS + 1
+
+        # Session directory management
+        self.session_id: str = str(uuid.uuid4())
+        self.session_dir: Optional[Path] = None
+        self.chunk_counter: int = 0
+        self.config_saved: bool = False
 
         self.moshaf: Optional[MoshafAttributes] = None
         self.aya_obj: Optional[Aya] = None
@@ -274,6 +291,89 @@ class SessionState:
     @staticmethod
     def _normalize_uthmani_text(text: str) -> str:
         return " ".join(text.split())
+    
+    def _create_session_directory(self) -> None:
+        """Create session directory under sessions/{session_id}/"""
+        sessions_root = Path("sessions")
+        sessions_root.mkdir(exist_ok=True)
+        
+        self.session_dir = sessions_root / self.session_id
+        self.session_dir.mkdir(exist_ok=True)
+        logger.info(f"Created session directory: {self.session_dir}")
+    
+    def _save_session_config(self, cfg: Dict[str, Any]) -> None:
+        """Save session configuration as JSON file"""
+        if self.session_dir is None:
+            self._create_session_directory()
+        
+        config_path = self.session_dir / f"session_config_{self.session_id}.json"
+        
+        # Add metadata to config
+        config_with_metadata = {
+            "session_id": self.session_id,
+            "timestamp": datetime.now().isoformat(),
+            "config": cfg
+        }
+        
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config_with_metadata, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Saved session config to: {config_path}")
+        self.config_saved = True
+    
+    def save_recitation_run(self, recitation_data: Dict[str, Any]) -> str:
+        """Save recitation run data as JSON file.
+        
+        Args:
+            recitation_data: Dictionary containing recitation run information
+            
+        Returns:
+            Path to saved file
+        """
+        if self.session_dir is None:
+            self._create_session_directory()
+        
+        recitation_path = self.session_dir / "recitation_run.json"
+        
+        # Add metadata to recitation data
+        recitation_with_metadata = {
+            "session_id": self.session_id,
+            "timestamp": datetime.now().isoformat(),
+            "data": recitation_data
+        }
+        
+        with open(recitation_path, 'w', encoding='utf-8') as f:
+            json.dump(recitation_with_metadata, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Saved recitation run data to: {recitation_path}")
+        return str(recitation_path)
+    
+    def _save_audio_chunk(self, audio_data: np.ndarray) -> Optional[str]:
+        """Save an audio chunk as a WAV file.
+        
+        Args:
+            audio_data: Audio samples to save (float32 mono)
+            
+        Returns:
+            Path to saved file, or None if failed
+        """
+        if self.session_dir is None:
+            self._create_session_directory()
+        
+        self.chunk_counter += 1
+        chunk_filename = f"chunk_{self.chunk_counter}.wav"
+        chunk_path = self.session_dir / chunk_filename
+        
+        try:
+            # Convert to tensor and save as WAV
+            audio_tensor = torch.from_numpy(audio_data).unsqueeze(0)
+            torchaudio.save(str(chunk_path), audio_tensor, self.sr)
+            logger.info(f"Saved audio chunk {self.chunk_counter} to: {chunk_path}")
+            return str(chunk_path)
+        except Exception as e:
+            logger.error(f"Failed to save audio chunk {self.chunk_counter}: {e}")
+            return None
+    
     
     @staticmethod
     def _process_waqf_phonemes(
@@ -506,7 +606,6 @@ class SessionState:
         self.aya_ref_text = normalized_text
         try:
             self.phonetizer_out = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=True)
-            temp_spaced_phonemes = quran_phonetizer(normalized_text, self.moshaf, remove_spaces=False).phonemes
             # Process waqf phonemes for phonetizer_out
             if self.phonetizer_out:
                 phonemes_text = getattr(self.phonetizer_out, "phonemes", "")
@@ -949,6 +1048,10 @@ class SessionState:
         if self.max_chunks < 1:
             raise ValueError("max_chunks must be at least 1")
         
+        # Create session directory and save config
+        self._create_session_directory()
+        self._save_session_config(cfg)
+        
         self.buffer = RollingBuffer(self.sr, chunk_ms=self.chunk_duration, max_chunks=self.max_chunks)
         self.window_extended_once = False
 
@@ -1113,6 +1216,74 @@ class SessionState:
             self._slide_window_based_on_cumulative(force=True)
             self._post_extension_stall = 0
 
+    def save_audio(self, audio_data: Optional[np.ndarray] = None) -> Optional[str]:
+        """Save accumulated audio data to a WAV file in both legacy location and session directory.
+        
+        Args:
+            audio_data: Optional additional audio data to include (for predict endpoint)
+            
+        Returns:
+            Path to saved file in session directory, or None if no audio to save
+        """
+        import os
+        from datetime import datetime
+        
+        # Collect all audio data
+        all_audio = []
+        
+        # Add accumulated chunks from WebSocket streaming
+        if self.audio_chunks:
+            for chunk in self.audio_chunks:
+                all_audio.append(chunk)
+        
+        # Add additional audio data if provided (for predict endpoint)
+        if audio_data is not None:
+            all_audio.append(audio_data)
+        
+        # Add any remaining audio from buffer
+        if self.buffer.any_audio_present():
+            remaining = self.buffer.window_with_staging()
+            if remaining is not None:
+                all_audio.append(remaining)
+        
+        if not all_audio:
+            return None
+        
+        # Concatenate all audio
+        combined_audio = np.concatenate(all_audio)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Save to legacy location for backward compatibility
+        save_dir = "saved_audio"
+        os.makedirs(save_dir, exist_ok=True)
+        legacy_filename = f"audio_{timestamp}.wav"
+        legacy_filepath = os.path.join(save_dir, legacy_filename)
+        torchaudio.save(legacy_filepath, torch.from_numpy(combined_audio).unsqueeze(0), self.sr)
+        
+        # Save to session directory if available
+        session_filepath = None
+        if self.session_dir is not None:
+            session_filename = f"combined_audio.wav"
+            session_filepath = str(self.session_dir / session_filename)
+            torchaudio.save(session_filepath, torch.from_numpy(combined_audio).unsqueeze(0), self.sr)
+            logger.info(f"Saved combined audio to session directory: {session_filepath}")
+            
+            # Also save metadata about the combined audio
+            metadata_path = self.session_dir / "audio_metadata.json"
+            metadata = {
+                "total_chunks": self.chunk_counter,
+                "total_samples": len(combined_audio),
+                "duration_seconds": len(combined_audio) / self.sr,
+                "sample_rate": self.sr,
+                "timestamp": timestamp
+            }
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2)
+        
+        return session_filepath or legacy_filepath
+
     def decode_binary_audio(self, data: bytes) -> np.ndarray:
         # Expect mono PCM16LE: int16 little-endian -> float32 [-1,1]
         arr = np.frombuffer(data, dtype='<i2')
@@ -1264,14 +1435,17 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
     ayahs = request.get("ayahs")
     
     if surah is None:
+        logger.error("'surah' is required in /reference request")
         return JSONResponse({"error": "'surah' is required"}, status_code=400)
     
     try:
         surah = int(surah)
     except (TypeError, ValueError):
+        logger.error("'surah' must be an integer")
         return JSONResponse({"error": "surah must be an integer"}, status_code=400)
     
     if surah < 1 or surah > 114:
+        logger.error("'surah' must be between 1 and 114")
         return JSONResponse({"error": "surah must be between 1 and 114"}, status_code=400)
     
     # Create moshaf attributes
@@ -1286,10 +1460,12 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
     if ayahs is not None:
         # Multiple ayahs
         if not isinstance(ayahs, list):
+            logger.error("'ayahs' must be a list of integers")
             return JSONResponse({"error": "'ayahs' must be a list of integers"}, status_code=400)
         try:
             ayahs = [int(a) for a in ayahs]
         except (TypeError, ValueError):
+            logger.error("All 'ayahs' must be integers")
             return JSONResponse({"error": "all ayahs must be integers"}, status_code=400)
         
         ayah_data = []
@@ -1377,12 +1553,14 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
     try:
         ayah = int(ayah)
     except (TypeError, ValueError):
+        logger.error("'ayah' must be an integer")
         return JSONResponse({"error": "ayah must be an integer"}, status_code=400)
     
     start_word = int(request.get("start_word", 1))
     num_words_requested = request.get("num_words")
     
     if start_word < 1:
+        logger.error("'start_word' must be at least 1")
         return JSONResponse({"error": "start_word must be at least 1"}, status_code=400)
     
     try:
@@ -1392,12 +1570,14 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
         all_words = [" ".join(w.split()) for w in (full_aya.uthmani_words or []) if w.strip()]
         
         if not all_words:
+            logger.error(f"No words found for surah {surah}, ayah {ayah}")
             return JSONResponse({"error": f"No words found for surah {surah}, ayah {ayah}"}, status_code=404)
         
         # Determine target number of words
         if num_words_requested is not None:
             num_words_requested = int(num_words_requested)
             if num_words_requested < 1:
+                logger.error("'num_words' must be at least 1")
                 return JSONResponse({"error": "num_words must be at least 1"}, status_code=400)
             words_remaining = num_words_requested
         else:
@@ -1485,6 +1665,7 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
 
         
         if not selected_words:
+            logger.error(f"No words found for surah {surah}, ayah {ayah}")
             return JSONResponse({"error": "No words could be retrieved"}, status_code=500)
         
         text = " ".join(selected_words)
@@ -1604,6 +1785,69 @@ async def uthmani(request: Dict[str, Any]) -> JSONResponse:
         return JSONResponse({"error": f"Conversion failed: {str(e)}"}, status_code=500)
 
 
+@app.post("/recitation_run")
+async def save_recitation_run(file: UploadFile, session_id: str = Form(...)) -> JSONResponse:
+    """Save recitation run data to a session directory.
+    
+    Request (multipart/form-data):
+    - file: JSON file containing recitation run data
+    - session_id: Session identifier (form field)
+    
+    Response:
+    {
+        "success": true,
+        "session_id": <str>,
+        "saved_path": <str>
+    }
+    """
+    if not session_id or not isinstance(session_id, str):
+        return JSONResponse({"error": "'session_id' string is required"}, status_code=400)
+    
+    if not file:
+        return JSONResponse({"error": "JSON file is required"}, status_code=400)
+    
+    # Validate file is JSON
+    if not file.filename or not file.filename.endswith('.json'):
+        return JSONResponse({"error": "File must be a JSON file (.json)"}, status_code=400)
+    
+    try:
+        # Read the uploaded JSON file content
+        content = await file.read()
+        
+        # Validate it's valid JSON (but don't parse it)
+        try:
+            json.loads(content.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            return JSONResponse({"error": f"Invalid JSON file: {str(e)}"}, status_code=400)
+        except UnicodeDecodeError as e:
+            return JSONResponse({"error": f"File encoding error: {str(e)}"}, status_code=400)
+        
+        # Create session directory
+        sessions_root = Path("sessions")
+        sessions_root.mkdir(exist_ok=True)
+        
+        session_dir = sessions_root / session_id
+        session_dir.mkdir(exist_ok=True)
+        
+        recitation_path = session_dir / "recitation_run.json"
+        
+        # Save the file directly as uploaded
+        with open(recitation_path, 'wb') as f:
+            f.write(content)
+        
+        logger.info(f"Saved recitation run data to: {recitation_path}")
+        
+        return JSONResponse({
+            "success": True,
+            "session_id": session_id,
+            "saved_path": str(recitation_path)
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to save recitation run for session {session_id}", exc_info=e)
+        return JSONResponse({"error": f"Failed to save recitation run: {str(e)}"}, status_code=500)
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
@@ -1621,6 +1865,7 @@ async def ws_endpoint(ws: WebSocket):
         session.configure(cfg)
         await ws.send_text(json.dumps({
             "type": "ready",
+            "session_id": session.session_id,
             "sampling_rate": session.sr,
             "audio_format": AUDIO_FORMAT,
             "chunk_duration": session.chunk_duration,
@@ -1634,6 +1879,11 @@ async def ws_endpoint(ws: WebSocket):
 
             if "bytes" in msg and msg["bytes"] is not None:
                 samples = session.decode_binary_audio(msg["bytes"])  # np.float32
+                session.audio_chunks.append(samples)  # Accumulate for saving
+                
+                # Save the incoming chunk to session directory
+                session._save_audio_chunk(samples)
+                
                 new_chunks = session.buffer.push_samples(samples)
             elif "text" in msg and msg["text"] is not None:
                 try:
@@ -1646,6 +1896,24 @@ async def ws_endpoint(ws: WebSocket):
                 if mtype == "reset":
                     session.reset_progress()
                     await ws.send_text(json.dumps({"type": "reset_ack"}))
+                    continue
+                elif mtype == "recitation_run":
+                    # Save recitation run data
+                    try:
+                        recitation_data = payload.get("data")
+                        if recitation_data is None:
+                            await ws.send_text(json.dumps({"type": "error", "message": "Missing 'data' field in recitation_run message"}))
+                            continue
+                        
+                        saved_path = session.save_recitation_run(recitation_data)
+                        await ws.send_text(json.dumps({
+                            "type": "recitation_run_ack",
+                            "saved_path": saved_path,
+                            "session_id": session.session_id
+                        }))
+                    except Exception as e:
+                        logger.error(f"Failed to save recitation run: {e}", exc_info=True)
+                        await ws.send_text(json.dumps({"type": "error", "message": f"Failed to save recitation run: {str(e)}"}))
                     continue
                 elif mtype == "end":
                     # Flush any partial audio (including <2s remainder) before closing
@@ -1661,6 +1929,7 @@ async def ws_endpoint(ws: WebSocket):
                                             sampling_rate=session.sr,
                                         )
                                     except Exception as e:
+                                        logger.error(f"Inference failed: {e}, phonetizer_out={session.phonetizer_out}", exc_info=True)
                                         await ws.send_text(json.dumps({"type": "error", "message": f"inference_failed: {e}"}))
                                         # proceed to close
                                         outs = []
@@ -1687,6 +1956,10 @@ async def ws_endpoint(ws: WebSocket):
                                         )
                                     )
                     finally:
+                        # Save accumulated audio before closing
+                        saved_path = session.save_audio()
+                        if saved_path:
+                            logger.info(f"Saved WebSocket audio to: {saved_path}")
                         await ws.send_text(json.dumps({"type": "bye"}))
                         await ws.close()
                         return
@@ -1716,6 +1989,7 @@ async def ws_endpoint(ws: WebSocket):
                             sampling_rate=session.sr,
                         )
                     except Exception as e:
+                        logger.error(f"Inference failed: {e}, phonetizer_out={session.phonetizer_out}", exc_info=True)
                         await ws.send_text(json.dumps({"type": "error", "message": f"inference_failed: {e}"}))
                         continue
 
@@ -1788,6 +2062,11 @@ async def predict(audio: UploadFile, config: str = Form(...)) -> JSONResponse:
         if sr != DEFAULT_SR:
             raise ValueError(f"Audio sample rate {sr} does not match expected {DEFAULT_SR}")
         
+        # Save the uploaded audio
+        saved_path = session.save_audio(wave)
+        if saved_path:
+            logger.info(f"Saved uploaded audio to: {saved_path}")
+        
         # Configure session
         session.configure(config_dict)
         
@@ -1797,6 +2076,7 @@ async def predict(audio: UploadFile, config: str = Form(...)) -> JSONResponse:
         
         outs = session.muaalem([wave], [session.phonetizer_out], sampling_rate=session.sr)
         if not outs:
+            logger.error(f"No inference output, phonetizer_out={session.phonetizer_out}, wave_shape={wave.shape}")
             raise ValueError("No inference output")
         out = outs[0]
         result = _to_serializable(out)
