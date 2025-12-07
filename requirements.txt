@@ -6,3 +6,5 @@ torch>=2.7.0
 transformers>=4.55.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
+librosa
+python-multipart
