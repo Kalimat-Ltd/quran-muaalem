@@ -81,6 +81,11 @@ FRAMES_PER_CHUNK = int(DEFAULT_SR * (DEFAULT_CHUNK_MS / 1000.0)) // FRAME_LEN
 AUDIO_FORMAT = "pcm16le"  # fixed wire format for binary frames
 P2U_MODEL_PATH = Path(__file__).parent.parent / "assets" / "p2u_byt5_best.pt"
 
+# Audio sanitization constants
+MIN_AUDIO_LEVEL_FOR_GAIN = 0.05
+MIN_AUDIO_LEVEL_CLAMP = 0.001
+MAX_GAIN_LIMIT = 10.0
+
 
 def _to_serializable(obj: Any) -> Any:
     """Convert dataclasses, tensors/ndarrays and common containers into JSON-serializable types."""
@@ -2061,6 +2066,27 @@ async def predict(audio: UploadFile, config: str = Form(...)) -> JSONResponse:
         wave, sr = librosa.load(audio_buffer, sr=DEFAULT_SR, mono=True)
         if sr != DEFAULT_SR:
             raise ValueError(f"Audio sample rate {sr} does not match expected {DEFAULT_SR}")
+        
+        # Sanitize
+        wave = np.nan_to_num(wave, nan=0.0, posinf=0.0, neginf=0.0)
+        if not np.any(wave):
+             raise ValueError("Audio is silent or empty")
+        
+        # Remove DC offset
+        mean = float(np.mean(wave))
+        if abs(mean) > 1e-6:
+            wave = wave - mean
+            
+        # Peak normalization or light auto-gain for very quiet audio
+        m = float(np.max(np.abs(wave)))
+        if m > 1.0:
+            wave = wave / m
+        elif 0.0 < m < MIN_AUDIO_LEVEL_FOR_GAIN:
+            # Apply gain for very quiet audio to bring it closer to normal levels
+            # Gain is calculated as 1/m, but clamped to avoid division by zero and excessive amplification
+            gain = min(1.0 / max(m, MIN_AUDIO_LEVEL_CLAMP), MAX_GAIN_LIMIT)
+            wave = np.clip(wave * gain, -1.0, 1.0)
+        logger.info("Audio loaded and preprocessed for prediction")
         
         # Save the uploaded audio
         saved_path = session.save_audio(wave)
