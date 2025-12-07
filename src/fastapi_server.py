@@ -1354,14 +1354,14 @@ async def _startup() -> None:
     waqf_handler.setFormatter(waqf_formatter)
     logger.addHandler(waqf_handler)
     
-    try:
-        logger.info("Initializing ByT5 phoneme->Uthmani model...")
-        logger.info(f"Path: {P2U_MODEL_PATH}, Device: {device}, Dtype: {dtype}")
-        app.state.phoneme2uth = PhonemeToUthmaniByT5(checkpoint_path=P2U_MODEL_PATH,device=device, dtype=dtype)
-        logger.info("ByT5 phoneme->Uthmani model initialized.")
-    except Exception as e:
-        logger.info(f"Failed to initialize ByT5 model: {e}")
-        app.state.phoneme2uth = None
+    # try:
+    #     logger.info("Initializing ByT5 phoneme->Uthmani model...")
+    #     logger.info(f"Path: {P2U_MODEL_PATH}, Device: {device}, Dtype: {dtype}")
+    #     app.state.phoneme2uth = PhonemeToUthmaniByT5(checkpoint_path=P2U_MODEL_PATH,device=device, dtype=dtype)
+    #     logger.info("ByT5 phoneme->Uthmani model initialized.")
+    # except Exception as e:
+    #     logger.info(f"Failed to initialize ByT5 model: {e}")
+    app.state.phoneme2uth = None
 
 
 @app.get("/health")
@@ -1720,6 +1720,7 @@ async def reference(request: Dict[str, Any]) -> JSONResponse:
 
 @app.post("/uthmani")
 async def uthmani(request: Dict[str, Any]) -> JSONResponse:
+    return {"error": "service unavailable"}
     # Check if phoneme2uthmani model is available
     phoneme2uth = getattr(app.state, "phoneme2uth", None)
     if phoneme2uth is None:
